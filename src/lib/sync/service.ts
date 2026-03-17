@@ -1,18 +1,36 @@
 import "server-only";
 
-import { and, desc, eq, gt, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lt, sql } from "drizzle-orm";
 
+import {
+  uploadGzippedNdjson,
+  uploadJsonObject,
+  type ArchiveObjectResult,
+} from "@/lib/archive/r2";
 import { getDb, withSyncAdvisoryLock } from "@/lib/db/client";
 import {
   appState,
+  companyDeltas,
   companySnapshotRows,
   countryAggregates,
+  countryDeltas,
   countryReference,
   regionAggregates,
+  regionDeltas,
   regionReference,
+  snapshotArchives,
+  snapshotComparisons,
   snapshots,
   syncRuns,
 } from "@/lib/db/schema";
+import { getR2ArchiveConfig } from "@/lib/env";
+import {
+  buildArchivePrefix,
+  findOldestMissingComparisonPair,
+  getHotSuccessfulSnapshotIds,
+  type CompletedSnapshot,
+  type SnapshotPair,
+} from "@/lib/sync/history";
 import {
   CURRENT_SNAPSHOT_STATE_KEY,
   SYNC_FAILED_RESUME_WINDOW_MS,
@@ -35,6 +53,7 @@ type SyncPhase =
   | "load_reference_data"
   | "sync_company_pages"
   | "build_aggregates"
+  | "build_deltas"
   | "promote_snapshot";
 
 type ActiveRun = {
@@ -47,10 +66,20 @@ type ActiveRun = {
   uniqueUsersFetched: number;
 };
 
+type CleanupAction =
+  | "pruned_failed_snapshot"
+  | "backfilled_snapshot_pair"
+  | "archived_snapshot"
+  | "pruned_archived_snapshot";
+
 export type SyncSummary = {
   snapshotId: string;
   runId: string;
-  phase: "sync_company_pages" | "build_aggregates" | "promote_snapshot";
+  phase:
+    | "sync_company_pages"
+    | "build_aggregates"
+    | "build_deltas"
+    | "promote_snapshot";
   companyPagesProcessed: number;
   companyRowsWritten: number;
   uniqueUsersFetched: number;
@@ -60,7 +89,57 @@ export type SyncSummary = {
   durationMs: number;
 };
 
+export type CleanupSummary = {
+  action: CleanupAction;
+  snapshotId?: string;
+  fromSnapshotId?: string;
+  toSnapshotId?: string;
+  durationMs: number;
+};
+
+type SnapshotArchiveManifest = {
+  snapshotId: string;
+  exportedAt: string;
+  bucketName: string;
+  objectPrefix: string;
+  snapshot: {
+    status: string;
+    source: string;
+    createdAt: string;
+    completedAt: string;
+    notes: string | null;
+  };
+  syncRun: {
+    id: string;
+    status: string;
+    phase: string;
+    companyPagesProcessed: number;
+    companyRowsWritten: number;
+    uniqueUsersFetched: number;
+    startedAt: string;
+    updatedAt: string;
+    finishedAt: string | null;
+    errorMessage: string | null;
+  } | null;
+  rowCounts: {
+    countries: number;
+    regions: number;
+    companies: number;
+    countryAggregates: number;
+    regionAggregates: number;
+  };
+  files: Array<{
+    key: string;
+    sizeBytes: number;
+    etag: string | null;
+    rowCount: number;
+  }>;
+};
+
 const STALE_MESSAGE = "Marked stale before starting a new sync run.";
+const FAILED_SNAPSHOT_RETENTION_MS = 24 * 60 * 60 * 1000;
+const HOT_SUCCESSFUL_SNAPSHOT_COUNT = 2;
+const COMPANY_ARCHIVE_BATCH_SIZE = 1_000;
 
 function chunk<T>(items: T[], size: number) {
   const result: T[][] = [];
@@ -92,6 +171,18 @@ function buildSummary(input: {
     hasMoreWork: input.hasMoreWork,
     durationMs: Date.now() - input.startedAt,
   } satisfies SyncSummary;
+}
+
+function buildCleanupSummary(
+  action: CleanupAction,
+  startedAt: number,
+  input: Omit<CleanupSummary, "action" | "durationMs"> = {},
+) {
+  return {
+    action,
+    ...input,
+    durationMs: Date.now() - startedAt,
+  } satisfies CleanupSummary;
 }
 
 async function markStaleRuns() {
@@ -350,6 +441,421 @@ async function buildRegionAggregates(snapshotId: string) {
       and top_owner.region_id = reference.region_id
     where reference.snapshot_id = ${snapshotId}
   `);
+}
+
+async function getCurrentPromotedSnapshot() {
+  const db = getDb();
+
+  return db.query.snapshots.findFirst({
+    where: eq(snapshots.status, "promoted"),
+    orderBy: [desc(snapshots.completedAt)],
+  });
+}
+
+async function buildDeltaPair(input: SnapshotPair) {
+  const db = getDb();
+  const pairSnapshots = await db.query.snapshots.findMany({
+    where: inArray(snapshots.id, [input.fromSnapshotId, input.toSnapshotId]),
+  });
+
+  const fromSnapshot = pairSnapshots.find((snapshot) => snapshot.id === input.fromSnapshotId);
+  const toSnapshot = pairSnapshots.find((snapshot) => snapshot.id === input.toSnapshotId);
+
+  if (!fromSnapshot?.completedAt || !toSnapshot?.completedAt) {
+    throw new Error("Both snapshots must be completed before delta generation.");
+  }
+
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(companyDeltas)
+      .where(
+        and(
+          eq(companyDeltas.fromSnapshotId, input.fromSnapshotId),
+          eq(companyDeltas.toSnapshotId, input.toSnapshotId),
+        ),
+      );
+
+    await tx
+      .delete(countryDeltas)
+      .where(
+        and(
+          eq(countryDeltas.fromSnapshotId, input.fromSnapshotId),
+          eq(countryDeltas.toSnapshotId, input.toSnapshotId),
+        ),
+      );
+
+    await tx
+      .delete(regionDeltas)
+      .where(
+        and(
+          eq(regionDeltas.fromSnapshotId, input.fromSnapshotId),
+          eq(regionDeltas.toSnapshotId, input.toSnapshotId),
+        ),
+      );
+
+    await tx
+      .delete(snapshotComparisons)
+      .where(
+        and(
+          eq(snapshotComparisons.fromSnapshotId, input.fromSnapshotId),
+          eq(snapshotComparisons.toSnapshotId, input.toSnapshotId),
+        ),
+      );
+
+    await tx.execute(sql`
+      insert into company_deltas (
+        from_snapshot_id,
+        to_snapshot_id,
+        company_id,
+        exists_in_from,
+        exists_in_to,
+        from_region_id,
+        to_region_id,
+        from_country_id,
+        to_country_id,
+        from_owner_country_id,
+        to_owner_country_id,
+        region_changed,
+        country_changed,
+        owner_country_changed,
+        worker_count_delta,
+        estimated_value_delta,
+        production_delta
+      )
+      with paired_rows as (
+        select
+          coalesce(from_rows.company_id, to_rows.company_id) as company_id,
+          from_rows.company_id is not null as exists_in_from,
+          to_rows.company_id is not null as exists_in_to,
+          from_rows.region_id as from_region_id,
+          to_rows.region_id as to_region_id,
+          from_rows.country_id as from_country_id,
+          to_rows.country_id as to_country_id,
+          from_rows.owner_country_id as from_owner_country_id,
+          to_rows.owner_country_id as to_owner_country_id,
+          (
+            from_rows.company_id is not null
+            and to_rows.company_id is not null
+            and from_rows.region_id is distinct from to_rows.region_id
+          ) as region_changed,
+          (
+            from_rows.company_id is not null
+            and to_rows.company_id is not null
+            and from_rows.country_id is distinct from to_rows.country_id
+          ) as country_changed,
+          (
+            from_rows.company_id is not null
+            and to_rows.company_id is not null
+            and from_rows.owner_country_id is distinct from to_rows.owner_country_id
+          ) as owner_country_changed,
+          case
+            when from_rows.worker_count is not null or to_rows.worker_count is not null
+              then coalesce(to_rows.worker_count, 0) - coalesce(from_rows.worker_count, 0)
+            else null
+          end as worker_count_delta,
+          case
+            when from_rows.estimated_value is not null or to_rows.estimated_value is not null
+              then coalesce(to_rows.estimated_value, 0) - coalesce(from_rows.estimated_value, 0)
+            else null
+          end as estimated_value_delta,
+          case
+            when from_rows.production is not null or to_rows.production is not null
+              then coalesce(to_rows.production, 0) - coalesce(from_rows.production, 0)
+            else null
+          end as production_delta,
+          (
+            from_rows.company_id is null
+            or to_rows.company_id is null
+            or from_rows.region_id is distinct from to_rows.region_id
+            or from_rows.country_id is distinct from to_rows.country_id
+            or from_rows.owner_country_id is distinct from to_rows.owner_country_id
+            or from_rows.worker_count is distinct from to_rows.worker_count
+            or from_rows.estimated_value is distinct from to_rows.estimated_value
+            or from_rows.production is distinct from to_rows.production
+          ) as tracked_changed
+        from (
+          select *
+          from company_snapshot_rows
+          where snapshot_id = ${input.fromSnapshotId}
+        ) as from_rows
+        full outer join (
+          select *
+          from company_snapshot_rows
+          where snapshot_id = ${input.toSnapshotId}
+        ) as to_rows
+          on from_rows.company_id = to_rows.company_id
+      )
+      select
+        ${input.fromSnapshotId},
+        ${input.toSnapshotId},
+        paired_rows.company_id,
+        paired_rows.exists_in_from,
+        paired_rows.exists_in_to,
+        paired_rows.from_region_id,
+        paired_rows.to_region_id,
+        paired_rows.from_country_id,
+        paired_rows.to_country_id,
+        paired_rows.from_owner_country_id,
+        paired_rows.to_owner_country_id,
+        paired_rows.region_changed,
+        paired_rows.country_changed,
+        paired_rows.owner_country_changed,
+        paired_rows.worker_count_delta,
+        paired_rows.estimated_value_delta,
+        paired_rows.production_delta
+      from paired_rows
+      where paired_rows.tracked_changed
+    `);
+
+    await tx.execute(sql`
+      insert into country_deltas (
+        from_snapshot_id,
+        to_snapshot_id,
+        country_id,
+        country_code,
+        country_name,
+        from_company_count,
+        to_company_count,
+        company_count_delta,
+        regions_with_companies_delta,
+        domestic_owned_delta,
+        foreign_owned_delta,
+        unique_owner_countries_delta,
+        gained_companies_count,
+        lost_companies_count,
+        from_income_tax,
+        to_income_tax,
+        income_tax_delta,
+        from_market_tax,
+        to_market_tax,
+        market_tax_delta,
+        from_self_work_tax,
+        to_self_work_tax,
+        self_work_tax_delta
+      )
+      with transitions as (
+        select
+          from_rows.country_id as from_country_id,
+          to_rows.country_id as to_country_id
+        from (
+          select company_id, country_id
+          from company_snapshot_rows
+          where snapshot_id = ${input.fromSnapshotId}
+        ) as from_rows
+        full outer join (
+          select company_id, country_id
+          from company_snapshot_rows
+          where snapshot_id = ${input.toSnapshotId}
+        ) as to_rows
+          on from_rows.company_id = to_rows.company_id
+      ),
+      movement_counts as (
+        select
+          country_id,
+          sum(gained)::int as gained_companies_count,
+          sum(lost)::int as lost_companies_count
+        from (
+          select
+            to_country_id as country_id,
+            count(*)::int as gained,
+            0::int as lost
+          from transitions
+          where
+            to_country_id is not null
+            and (from_country_id is null or from_country_id <> to_country_id)
+          group by to_country_id
+
+          union all
+
+          select
+            from_country_id as country_id,
+            0::int as gained,
+            count(*)::int as lost
+          from transitions
+          where
+            from_country_id is not null
+            and (to_country_id is null or to_country_id <> from_country_id)
+          group by from_country_id
+        ) movement_union
+        group by country_id
+      )
+      select
+        ${input.fromSnapshotId},
+        ${input.toSnapshotId},
+        coalesce(to_rows.country_id, from_rows.country_id),
+        coalesce(to_rows.country_code, from_rows.country_code),
+        coalesce(to_rows.country_name, from_rows.country_name),
+        coalesce(from_rows.company_count, 0),
+        coalesce(to_rows.company_count, 0),
+        coalesce(to_rows.company_count, 0) - coalesce(from_rows.company_count, 0),
+        coalesce(to_rows.regions_with_companies, 0) - coalesce(from_rows.regions_with_companies, 0),
+        coalesce(to_rows.domestic_owned_count, 0) - coalesce(from_rows.domestic_owned_count, 0),
+        coalesce(to_rows.foreign_owned_count, 0) - coalesce(from_rows.foreign_owned_count, 0),
+        coalesce(to_rows.unique_owner_countries, 0) - coalesce(from_rows.unique_owner_countries, 0),
+        coalesce(movement_counts.gained_companies_count, 0),
+        coalesce(movement_counts.lost_companies_count, 0),
+        from_rows.income_tax,
+        to_rows.income_tax,
+        case
+          when from_rows.income_tax is null or to_rows.income_tax is null then null
+          else to_rows.income_tax - from_rows.income_tax
+        end,
+        from_rows.market_tax,
+        to_rows.market_tax,
+        case
+          when from_rows.market_tax is null or to_rows.market_tax is null then null
+          else to_rows.market_tax - from_rows.market_tax
+        end,
+        from_rows.self_work_tax,
+        to_rows.self_work_tax,
+        case
+          when from_rows.self_work_tax is null or to_rows.self_work_tax is null then null
+          else to_rows.self_work_tax - from_rows.self_work_tax
+        end
+      from (
+        select *
+        from country_aggregates
+        where snapshot_id = ${input.fromSnapshotId}
+      ) as from_rows
+      full outer join (
+        select *
+        from country_aggregates
+        where snapshot_id = ${input.toSnapshotId}
+      ) as to_rows
+        on from_rows.country_id = to_rows.country_id
+      left join movement_counts
+        on movement_counts.country_id = coalesce(to_rows.country_id, from_rows.country_id)
+    `);
+
+    await tx.execute(sql`
+      insert into region_deltas (
+        from_snapshot_id,
+        to_snapshot_id,
+        region_id,
+        region_code,
+        region_name,
+        country_id,
+        country_code,
+        country_name,
+        from_company_count,
+        to_company_count,
+        company_count_delta,
+        domestic_owned_delta,
+        foreign_owned_delta,
+        unique_owner_countries_delta,
+        gained_companies_count,
+        lost_companies_count,
+        net_flow
+      )
+      with transitions as (
+        select
+          from_rows.region_id as from_region_id,
+          to_rows.region_id as to_region_id
+        from (
+          select company_id, region_id
+          from company_snapshot_rows
+          where snapshot_id = ${input.fromSnapshotId}
+        ) as from_rows
+        full outer join (
+          select company_id, region_id
+          from company_snapshot_rows
+          where snapshot_id = ${input.toSnapshotId}
+        ) as to_rows
+          on from_rows.company_id = to_rows.company_id
+      ),
+      movement_counts as (
+        select
+          region_id,
+          sum(gained)::int as gained_companies_count,
+          sum(lost)::int as lost_companies_count
+        from (
+          select
+            to_region_id as region_id,
+            count(*)::int as gained,
+            0::int as lost
+          from transitions
+          where
+            to_region_id is not null
+            and (from_region_id is null or from_region_id <> to_region_id)
+          group by to_region_id
+
+          union all
+
+          select
+            from_region_id as region_id,
+            0::int as gained,
+            count(*)::int as lost
+          from transitions
+          where
+            from_region_id is not null
+            and (to_region_id is null or to_region_id <> from_region_id)
+          group by from_region_id
+        ) movement_union
+        group by region_id
+      )
+      select
+        ${input.fromSnapshotId},
+        ${input.toSnapshotId},
+        coalesce(to_rows.region_id, from_rows.region_id),
+        coalesce(to_rows.region_code, from_rows.region_code),
+        coalesce(to_rows.region_name, from_rows.region_name),
+        coalesce(to_rows.country_id, from_rows.country_id),
+        coalesce(to_rows.country_code, from_rows.country_code),
+        coalesce(to_rows.country_name, from_rows.country_name),
+        coalesce(from_rows.company_count, 0),
+        coalesce(to_rows.company_count, 0),
+        coalesce(to_rows.company_count, 0) - coalesce(from_rows.company_count, 0),
+        coalesce(to_rows.domestic_owned_count, 0) - coalesce(from_rows.domestic_owned_count, 0),
+        coalesce(to_rows.foreign_owned_count, 0) - coalesce(from_rows.foreign_owned_count, 0),
+        coalesce(to_rows.unique_owner_countries, 0) - coalesce(from_rows.unique_owner_countries, 0),
+        coalesce(movement_counts.gained_companies_count, 0),
+        coalesce(movement_counts.lost_companies_count, 0),
+        coalesce(movement_counts.gained_companies_count, 0) - coalesce(movement_counts.lost_companies_count, 0)
+      from (
+        select *
+        from region_aggregates
+        where snapshot_id = ${input.fromSnapshotId}
+      ) as from_rows
+      full outer join (
+        select *
+        from region_aggregates
+        where snapshot_id = ${input.toSnapshotId}
+      ) as to_rows
+        on from_rows.region_id = to_rows.region_id
+      left join movement_counts
+        on movement_counts.region_id = coalesce(to_rows.region_id, from_rows.region_id)
+    `);
+
+    await tx.execute(sql`
+      insert into snapshot_comparisons (
+        from_snapshot_id,
+        to_snapshot_id,
+        from_snapshot_completed_at,
+        to_snapshot_completed_at,
+        new_companies_count,
+        deleted_companies_count,
+        region_moved_count,
+        country_moved_count,
+        owner_country_changed_count,
+        delta_build_completed_at
+      )
+      select
+        ${input.fromSnapshotId},
+        ${input.toSnapshotId},
+        ${fromSnapshot.completedAt},
+        ${toSnapshot.completedAt},
+        count(*) filter (where exists_in_to and not exists_in_from)::int,
+        count(*) filter (where exists_in_from and not exists_in_to)::int,
+        count(*) filter (where region_changed)::int,
+        count(*) filter (where country_changed)::int,
+        count(*) filter (where owner_country_changed)::int,
+        now()
+      from company_deltas
+      where
+        from_snapshot_id = ${input.fromSnapshotId}
+        and to_snapshot_id = ${input.toSnapshotId}
+    `);
+  });
 }
 
 async function promoteSnapshot(snapshotId: string, runId: string) {
@@ -729,6 +1235,479 @@ async function processCompanyPagesPhase(run: ActiveRun) {
   };
 }
 
+async function deleteSnapshotHotRows(snapshotId: string) {
+  const db = getDb();
+
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(companySnapshotRows)
+      .where(eq(companySnapshotRows.snapshotId, snapshotId));
+    await tx.delete(countryReference).where(eq(countryReference.snapshotId, snapshotId));
+    await tx.delete(regionReference).where(eq(regionReference.snapshotId, snapshotId));
+    await tx
+      .delete(countryAggregates)
+      .where(eq(countryAggregates.snapshotId, snapshotId));
+    await tx.delete(regionAggregates).where(eq(regionAggregates.snapshotId, snapshotId));
+  });
+}
+
+async function getSuccessfulSnapshots() {
+  const db = getDb();
+
+  return db.query.snapshots.findMany({
+    where: inArray(snapshots.status, ["promoted", "archived"]),
+    orderBy: [asc(snapshots.completedAt), asc(snapshots.createdAt)],
+  });
+}
+
+async function getExistingComparisonPairs() {
+  const db = getDb();
+
+  return db.query.snapshotComparisons.findMany({
+    orderBy: [
+      asc(snapshotComparisons.fromSnapshotCompletedAt),
+      asc(snapshotComparisons.toSnapshotCompletedAt),
+    ],
+  });
+}
+
+async function selectFailedSnapshotForPrune(): Promise<string | null> {
+  const db = getDb();
+  const cutoff = new Date(Date.now() - FAILED_SNAPSHOT_RETENTION_MS);
+  const result = await db.execute(sql<{ snapshotId: string }>`
+    select s.id as "snapshotId"
+    from snapshots as s
+    where
+      s.status in ('failed', 'staging')
+      and s.created_at < ${cutoff}
+      and (
+        exists (
+          select 1
+          from company_snapshot_rows csr
+          where csr.snapshot_id = s.id
+        )
+        or exists (
+          select 1
+          from country_reference cr
+          where cr.snapshot_id = s.id
+        )
+        or exists (
+          select 1
+          from region_reference rr
+          where rr.snapshot_id = s.id
+        )
+        or exists (
+          select 1
+          from country_aggregates ca
+          where ca.snapshot_id = s.id
+        )
+        or exists (
+          select 1
+          from region_aggregates ra
+          where ra.snapshot_id = s.id
+        )
+      )
+    order by s.created_at asc
+    limit 1
+  `);
+
+  const row = result.rows[0] as { snapshotId: string } | undefined;
+
+  return row?.snapshotId ?? null;
+}
+
+async function upsertSnapshotArchive(input: {
+  snapshotId: string;
+  archiveStatus: "pending" | "uploaded" | "pruned" | "failed";
+  bucketName?: string | null;
+  objectPrefix?: string | null;
+  manifestKey?: string | null;
+  manifestEtag?: string | null;
+  totalBytes?: number | null;
+  uploadedAt?: Date | null;
+  dbPrunedAt?: Date | null;
+  lastError?: string | null;
+}) {
+  const db = getDb();
+
+  await db
+    .insert(snapshotArchives)
+    .values({
+      snapshotId: input.snapshotId,
+      archiveStatus: input.archiveStatus,
+      bucketName: input.bucketName ?? null,
+      objectPrefix: input.objectPrefix ?? null,
+      manifestKey: input.manifestKey ?? null,
+      manifestEtag: input.manifestEtag ?? null,
+      totalBytes: input.totalBytes ?? null,
+      uploadedAt: input.uploadedAt ?? null,
+      dbPrunedAt: input.dbPrunedAt ?? null,
+      lastError: input.lastError ?? null,
+    })
+    .onConflictDoUpdate({
+      target: snapshotArchives.snapshotId,
+      set: {
+        archiveStatus: input.archiveStatus,
+        bucketName: input.bucketName ?? null,
+        objectPrefix: input.objectPrefix ?? null,
+        manifestKey: input.manifestKey ?? null,
+        manifestEtag: input.manifestEtag ?? null,
+        totalBytes: input.totalBytes ?? null,
+        uploadedAt: input.uploadedAt ?? null,
+        dbPrunedAt: input.dbPrunedAt ?? null,
+        lastError: input.lastError ?? null,
+      },
+    });
+}
+
+async function getSnapshotRowCounts(snapshotId: string) {
+  const db = getDb();
+  const result = await db.execute(sql<{
+    countries: number;
+    regions: number;
+    companies: number;
+    countryAggregates: number;
+    regionAggregates: number;
+  }>`
+    select
+      (select count(*)::int from country_reference where snapshot_id = ${snapshotId}) as "countries",
+      (select count(*)::int from region_reference where snapshot_id = ${snapshotId}) as "regions",
+      (select count(*)::int from company_snapshot_rows where snapshot_id = ${snapshotId}) as "companies",
+      (select count(*)::int from country_aggregates where snapshot_id = ${snapshotId}) as "countryAggregates",
+      (select count(*)::int from region_aggregates where snapshot_id = ${snapshotId}) as "regionAggregates"
+  `);
+
+  return (
+    (result.rows[0] as
+      | {
+          countries: number;
+          regions: number;
+          companies: number;
+          countryAggregates: number;
+          regionAggregates: number;
+        }
+      | undefined) ?? {
+      countries: 0,
+      regions: 0,
+      companies: 0,
+      countryAggregates: 0,
+      regionAggregates: 0,
+    }
+  );
+}
+
+async function* iterateCountryReferenceRows(snapshotId: string) {
+  const db = getDb();
+  const rows = await db.query.countryReference.findMany({
+    where: eq(countryReference.snapshotId, snapshotId),
+    orderBy: [asc(countryReference.countryCode)],
+  });
+
+  for (const row of rows) {
+    yield row;
+  }
+}
+
+async function* iterateRegionReferenceRows(snapshotId: string) {
+  const db = getDb();
+  const rows = await db.query.regionReference.findMany({
+    where: eq(regionReference.snapshotId, snapshotId),
+    orderBy: [asc(regionReference.regionCode)],
+  });
+
+  for (const row of rows) {
+    yield row;
+  }
+}
+
+async function* iterateCompanySnapshotRows(snapshotId: string) {
+  const db = getDb();
+  let lastCompanyId: string | null = null;
+
+  while (true) {
+    const rows: Awaited<ReturnType<typeof db.query.companySnapshotRows.findMany>> =
+      await db.query.companySnapshotRows.findMany({
+      where: lastCompanyId
+        ? and(
+            eq(companySnapshotRows.snapshotId, snapshotId),
+            gt(companySnapshotRows.companyId, lastCompanyId),
+          )
+        : eq(companySnapshotRows.snapshotId, snapshotId),
+      orderBy: [asc(companySnapshotRows.companyId)],
+      limit: COMPANY_ARCHIVE_BATCH_SIZE,
+      });
+
+    if (rows.length === 0) {
+      return;
+    }
+
+    for (const row of rows) {
+      yield row;
+    }
+
+    lastCompanyId = rows[rows.length - 1]!.companyId;
+  }
+}
+
+async function* iterateCountryAggregateRows(snapshotId: string) {
+  const db = getDb();
+  const rows = await db.query.countryAggregates.findMany({
+    where: eq(countryAggregates.snapshotId, snapshotId),
+    orderBy: [asc(countryAggregates.countryCode)],
+  });
+
+  for (const row of rows) {
+    yield row;
+  }
+}
+
+async function* iterateRegionAggregateRows(snapshotId: string) {
+  const db = getDb();
+  const rows = await db.query.regionAggregates.findMany({
+    where: eq(regionAggregates.snapshotId, snapshotId),
+    orderBy: [asc(regionAggregates.regionCode)],
+  });
+
+  for (const row of rows) {
+    yield row;
+  }
+}
+
+async function archiveSnapshotToR2(snapshotId: string) {
+  const db = getDb();
+  const snapshot = await db.query.snapshots.findFirst({
+    where: eq(snapshots.id, snapshotId),
+  });
+
+  if (!snapshot?.completedAt) {
+    throw new Error("Only completed snapshots can be archived to R2.");
+  }
+
+  const latestRun = await db.query.syncRuns.findFirst({
+    where: eq(syncRuns.snapshotId, snapshotId),
+    orderBy: [desc(syncRuns.startedAt)],
+  });
+  const rowCounts = await getSnapshotRowCounts(snapshotId);
+  const config = getR2ArchiveConfig();
+  const objectPrefix = buildArchivePrefix({
+    archivePrefix: config.archivePrefix,
+    snapshotId,
+    completedAt: snapshot.completedAt,
+  });
+
+  await upsertSnapshotArchive({
+    snapshotId,
+    archiveStatus: "pending",
+    bucketName: config.bucketName,
+    objectPrefix,
+    lastError: null,
+  });
+
+  try {
+    const files: Array<ArchiveObjectResult & { rowCount: number }> = [];
+
+    files.push({
+      ...(await uploadGzippedNdjson({
+        key: `${objectPrefix}/country-reference.ndjson.gz`,
+        rows: iterateCountryReferenceRows(snapshotId),
+      })),
+      rowCount: rowCounts.countries,
+    });
+
+    files.push({
+      ...(await uploadGzippedNdjson({
+        key: `${objectPrefix}/region-reference.ndjson.gz`,
+        rows: iterateRegionReferenceRows(snapshotId),
+      })),
+      rowCount: rowCounts.regions,
+    });
+
+    files.push({
+      ...(await uploadGzippedNdjson({
+        key: `${objectPrefix}/company-snapshot-rows.ndjson.gz`,
+        rows: iterateCompanySnapshotRows(snapshotId),
+      })),
+      rowCount: rowCounts.companies,
+    });
+
+    files.push({
+      ...(await uploadGzippedNdjson({
+        key: `${objectPrefix}/country-aggregates.ndjson.gz`,
+        rows: iterateCountryAggregateRows(snapshotId),
+      })),
+      rowCount: rowCounts.countryAggregates,
+    });
+
+    files.push({
+      ...(await uploadGzippedNdjson({
+        key: `${objectPrefix}/region-aggregates.ndjson.gz`,
+        rows: iterateRegionAggregateRows(snapshotId),
+      })),
+      rowCount: rowCounts.regionAggregates,
+    });
+
+    const manifest: SnapshotArchiveManifest = {
+      snapshotId,
+      exportedAt: new Date().toISOString(),
+      bucketName: config.bucketName,
+      objectPrefix,
+      snapshot: {
+        status: snapshot.status,
+        source: snapshot.source,
+        createdAt: snapshot.createdAt.toISOString(),
+        completedAt: snapshot.completedAt.toISOString(),
+        notes: snapshot.notes ?? null,
+      },
+      syncRun: latestRun
+        ? {
+            id: latestRun.id,
+            status: latestRun.status,
+            phase: latestRun.phase,
+            companyPagesProcessed: latestRun.companyPagesProcessed,
+            companyRowsWritten: latestRun.companyRowsWritten,
+            uniqueUsersFetched: latestRun.uniqueUsersFetched,
+            startedAt: latestRun.startedAt.toISOString(),
+            updatedAt: latestRun.updatedAt.toISOString(),
+            finishedAt: latestRun.finishedAt?.toISOString() ?? null,
+            errorMessage: latestRun.errorMessage ?? null,
+          }
+        : null,
+      rowCounts,
+      files: files.map((file) => ({
+        key: file.key,
+        sizeBytes: file.sizeBytes,
+        etag: file.etag,
+        rowCount: file.rowCount,
+      })),
+    };
+
+    const manifestUpload = await uploadJsonObject({
+      key: `${objectPrefix}/manifest.json`,
+      content: manifest,
+    });
+
+    await upsertSnapshotArchive({
+      snapshotId,
+      archiveStatus: "uploaded",
+      bucketName: config.bucketName,
+      objectPrefix,
+      manifestKey: `${objectPrefix}/manifest.json`,
+      manifestEtag: manifestUpload.etag,
+      totalBytes:
+        manifestUpload.sizeBytes +
+        files.reduce((sum, file) => sum + file.sizeBytes, 0),
+      uploadedAt: new Date(),
+      lastError: null,
+    });
+  } catch (error) {
+    await upsertSnapshotArchive({
+      snapshotId,
+      archiveStatus: "failed",
+      bucketName: config.bucketName,
+      objectPrefix,
+      lastError:
+        error instanceof Error ? error.message : "Unknown R2 archive failure.",
+    });
+
+    throw error;
+  }
+}
+
+async function pruneArchivedSnapshot(snapshotId: string) {
+  await deleteSnapshotHotRows(snapshotId);
+  const archiveRow = await getDb().query.snapshotArchives.findFirst({
+    where: eq(snapshotArchives.snapshotId, snapshotId),
+  });
+
+  await upsertSnapshotArchive({
+    snapshotId,
+    archiveStatus: "pruned",
+    bucketName: archiveRow?.bucketName ?? null,
+    objectPrefix: archiveRow?.objectPrefix ?? null,
+    manifestKey: archiveRow?.manifestKey ?? null,
+    manifestEtag: archiveRow?.manifestEtag ?? null,
+    totalBytes: archiveRow?.totalBytes ?? null,
+    uploadedAt: archiveRow?.uploadedAt ?? null,
+    dbPrunedAt: new Date(),
+    lastError: null,
+  });
+}
+
+function findNextSnapshotId(
+  successfulSnapshots: CompletedSnapshot[],
+  snapshotId: string,
+) {
+  const snapshotIndex = successfulSnapshots.findIndex((snapshot) => snapshot.id === snapshotId);
+
+  if (snapshotIndex === -1 || snapshotIndex === successfulSnapshots.length - 1) {
+    return null;
+  }
+
+  return successfulSnapshots[snapshotIndex + 1]!.id;
+}
+
+async function selectArchiveCandidates() {
+  const db = getDb();
+  const successfulSnapshots = (await getSuccessfulSnapshots()).filter(
+    (snapshot): snapshot is typeof snapshot & { completedAt: Date } =>
+      Boolean(snapshot.completedAt),
+  );
+
+  if (successfulSnapshots.length <= HOT_SUCCESSFUL_SNAPSHOT_COUNT) {
+    return {
+      uploadCandidate: null,
+      pruneCandidate: null,
+    };
+  }
+
+  const existingPairs = await getExistingComparisonPairs();
+  const pairKeys = new Set(
+    existingPairs.map((pair) => `${pair.fromSnapshotId}:${pair.toSnapshotId}`),
+  );
+  const hotSnapshotIds = new Set(
+    getHotSuccessfulSnapshotIds(successfulSnapshots, HOT_SUCCESSFUL_SNAPSHOT_COUNT),
+  );
+  const archiveRows = await db.query.snapshotArchives.findMany();
+  const archiveRowBySnapshotId = new Map(
+    archiveRows.map((archiveRow) => [archiveRow.snapshotId, archiveRow]),
+  );
+
+  let uploadCandidate: typeof successfulSnapshots[number] | null = null;
+  let pruneCandidate: typeof successfulSnapshots[number] | null = null;
+
+  for (const snapshot of successfulSnapshots) {
+    if (hotSnapshotIds.has(snapshot.id)) {
+      continue;
+    }
+
+    const nextSnapshotId = findNextSnapshotId(successfulSnapshots, snapshot.id);
+
+    if (!nextSnapshotId || !pairKeys.has(`${snapshot.id}:${nextSnapshotId}`)) {
+      continue;
+    }
+
+    const archiveRow = archiveRowBySnapshotId.get(snapshot.id);
+
+    if (
+      !uploadCandidate &&
+      (!archiveRow ||
+        archiveRow.archiveStatus === "pending" ||
+        archiveRow.archiveStatus === "failed")
+    ) {
+      uploadCandidate = snapshot;
+    }
+
+    if (!pruneCandidate && archiveRow?.archiveStatus === "uploaded") {
+      pruneCandidate = snapshot;
+    }
+  }
+
+  return {
+    uploadCandidate,
+    pruneCandidate,
+  };
+}
+
 export async function runSyncPass(source: "manual" | "scheduled" = "manual") {
   const lockResult = await withSyncAdvisoryLock(async () => {
     const startedAt = Date.now();
@@ -808,6 +1787,31 @@ export async function runSyncPass(source: "manual" | "scheduled" = "manual") {
 
         await updateRunProgress({
           runId: activeRun.runId,
+          phase: "build_deltas",
+          phaseCursor: activeRun.phaseCursor,
+          companyPagesProcessed: activeRun.companyPagesProcessed,
+          companyRowsWritten: activeRun.companyRowsWritten,
+          uniqueUsersFetched: activeRun.uniqueUsersFetched,
+        });
+
+        activeRun = {
+          ...activeRun,
+          phase: "build_deltas",
+        };
+      }
+
+      if (activeRun.phase === "build_deltas") {
+        const previousPromotedSnapshot = await getCurrentPromotedSnapshot();
+
+        if (previousPromotedSnapshot) {
+          await buildDeltaPair({
+            fromSnapshotId: previousPromotedSnapshot.id,
+            toSnapshotId: activeRun.snapshotId,
+          });
+        }
+
+        await updateRunProgress({
+          runId: activeRun.runId,
           phase: "promote_snapshot",
           phaseCursor: activeRun.phaseCursor,
           companyPagesProcessed: activeRun.companyPagesProcessed,
@@ -842,6 +1846,93 @@ export async function runSyncPass(source: "manual" | "scheduled" = "manual") {
       });
       throw error;
     }
+  });
+
+  if (!lockResult.acquired) {
+    return {
+      ok: false as const,
+      reason: "sync-already-running",
+    };
+  }
+
+  return {
+    ok: true as const,
+    status: lockResult.value.status,
+    summary: lockResult.value.summary,
+  };
+}
+
+export async function runCleanupPass() {
+  const lockResult = await withSyncAdvisoryLock(async () => {
+    const startedAt = Date.now();
+    await markStaleRuns();
+
+    const failedSnapshotId = await selectFailedSnapshotForPrune();
+
+    if (failedSnapshotId) {
+      await deleteSnapshotHotRows(failedSnapshotId);
+
+      return {
+        status: "working" as const,
+        summary: buildCleanupSummary("pruned_failed_snapshot", startedAt, {
+          snapshotId: failedSnapshotId,
+        }),
+      };
+    }
+
+    const successfulSnapshots = (await getSuccessfulSnapshots()).filter(
+      (snapshot): snapshot is typeof snapshot & { completedAt: Date } =>
+        Boolean(snapshot.completedAt),
+    );
+    const existingPairs = await getExistingComparisonPairs();
+    const missingPair = findOldestMissingComparisonPair({
+      successfulSnapshots,
+      existingPairs: existingPairs.map((pair) => ({
+        fromSnapshotId: pair.fromSnapshotId,
+        toSnapshotId: pair.toSnapshotId,
+      })),
+    });
+
+    if (missingPair) {
+      await buildDeltaPair(missingPair);
+
+      return {
+        status: "working" as const,
+        summary: buildCleanupSummary("backfilled_snapshot_pair", startedAt, {
+          fromSnapshotId: missingPair.fromSnapshotId,
+          toSnapshotId: missingPair.toSnapshotId,
+        }),
+      };
+    }
+
+    const { uploadCandidate, pruneCandidate } = await selectArchiveCandidates();
+
+    if (uploadCandidate) {
+      await archiveSnapshotToR2(uploadCandidate.id);
+
+      return {
+        status: "working" as const,
+        summary: buildCleanupSummary("archived_snapshot", startedAt, {
+          snapshotId: uploadCandidate.id,
+        }),
+      };
+    }
+
+    if (pruneCandidate) {
+      await pruneArchivedSnapshot(pruneCandidate.id);
+
+      return {
+        status: "working" as const,
+        summary: buildCleanupSummary("pruned_archived_snapshot", startedAt, {
+          snapshotId: pruneCandidate.id,
+        }),
+      };
+    }
+
+    return {
+      status: "idle" as const,
+      summary: null,
+    };
   });
 
   if (!lockResult.acquired) {

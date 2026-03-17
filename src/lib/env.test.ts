@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  getR2ArchiveConfig,
   getWareraApiBaseUrl,
   getWareraApiKey,
   getWareraClientConfig,
+  hasR2ArchiveConfig,
 } from "./env";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -36,6 +38,22 @@ describe("env helpers", () => {
       apiKey: "key-value",
       rateLimit: 450,
       url: "https://api2.warera.io/trpc",
+    });
+  });
+
+  it("builds the R2 archive config with the default prefix", () => {
+    process.env.R2_ACCOUNT_ID = "account-id";
+    process.env.R2_BUCKET_NAME = "bucket-name";
+    process.env.R2_ACCESS_KEY_ID = "access-key";
+    process.env.R2_SECRET_ACCESS_KEY = "secret-key";
+
+    expect(hasR2ArchiveConfig()).toBe(true);
+    expect(getR2ArchiveConfig()).toMatchObject({
+      accountId: "account-id",
+      bucketName: "bucket-name",
+      accessKeyId: "access-key",
+      secretAccessKey: "secret-key",
+      archivePrefix: "warera-raw-snapshots",
     });
   });
 });

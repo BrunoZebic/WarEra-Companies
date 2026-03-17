@@ -34,7 +34,15 @@ export const syncPhaseEnum = pgEnum("sync_phase", [
   "load_reference_data",
   "sync_company_pages",
   "build_aggregates",
+  "build_deltas",
   "promote_snapshot",
+]);
+
+export const snapshotArchiveStatusEnum = pgEnum("snapshot_archive_status", [
+  "pending",
+  "uploaded",
+  "pruned",
+  "failed",
 ]);
 
 export const snapshots = pgTable("snapshots", {
@@ -231,6 +239,171 @@ export const regionAggregates = pgTable(
       table.companyCount,
     ),
   ],
+);
+
+export const snapshotComparisons = pgTable(
+  "snapshot_comparisons",
+  {
+    fromSnapshotId: uuid("from_snapshot_id")
+      .references(() => snapshots.id, { onDelete: "cascade" })
+      .notNull(),
+    toSnapshotId: uuid("to_snapshot_id")
+      .references(() => snapshots.id, { onDelete: "cascade" })
+      .notNull(),
+    fromSnapshotCompletedAt: timestamp("from_snapshot_completed_at", {
+      withTimezone: true,
+    }).notNull(),
+    toSnapshotCompletedAt: timestamp("to_snapshot_completed_at", {
+      withTimezone: true,
+    }).notNull(),
+    newCompaniesCount: integer("new_companies_count").notNull(),
+    deletedCompaniesCount: integer("deleted_companies_count").notNull(),
+    regionMovedCount: integer("region_moved_count").notNull(),
+    countryMovedCount: integer("country_moved_count").notNull(),
+    ownerCountryChangedCount: integer("owner_country_changed_count").notNull(),
+    deltaBuildCompletedAt: timestamp("delta_build_completed_at", {
+      withTimezone: true,
+    })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.fromSnapshotId, table.toSnapshotId] }),
+    index("snapshot_comparisons_to_snapshot_idx").on(table.toSnapshotId),
+  ],
+);
+
+export const companyDeltas = pgTable(
+  "company_deltas",
+  {
+    fromSnapshotId: uuid("from_snapshot_id")
+      .references(() => snapshots.id, { onDelete: "cascade" })
+      .notNull(),
+    toSnapshotId: uuid("to_snapshot_id")
+      .references(() => snapshots.id, { onDelete: "cascade" })
+      .notNull(),
+    companyId: text("company_id").notNull(),
+    existsInFrom: boolean("exists_in_from").notNull(),
+    existsInTo: boolean("exists_in_to").notNull(),
+    fromRegionId: text("from_region_id"),
+    toRegionId: text("to_region_id"),
+    fromCountryId: text("from_country_id"),
+    toCountryId: text("to_country_id"),
+    fromOwnerCountryId: text("from_owner_country_id"),
+    toOwnerCountryId: text("to_owner_country_id"),
+    regionChanged: boolean("region_changed").notNull(),
+    countryChanged: boolean("country_changed").notNull(),
+    ownerCountryChanged: boolean("owner_country_changed").notNull(),
+    workerCountDelta: integer("worker_count_delta"),
+    estimatedValueDelta: doublePrecision("estimated_value_delta"),
+    productionDelta: doublePrecision("production_delta"),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.fromSnapshotId, table.toSnapshotId, table.companyId],
+    }),
+    index("company_deltas_company_to_snapshot_idx").on(
+      table.companyId,
+      table.toSnapshotId,
+    ),
+  ],
+);
+
+export const countryDeltas = pgTable(
+  "country_deltas",
+  {
+    fromSnapshotId: uuid("from_snapshot_id")
+      .references(() => snapshots.id, { onDelete: "cascade" })
+      .notNull(),
+    toSnapshotId: uuid("to_snapshot_id")
+      .references(() => snapshots.id, { onDelete: "cascade" })
+      .notNull(),
+    countryId: text("country_id").notNull(),
+    countryCode: text("country_code").notNull(),
+    countryName: text("country_name").notNull(),
+    fromCompanyCount: integer("from_company_count").notNull(),
+    toCompanyCount: integer("to_company_count").notNull(),
+    companyCountDelta: integer("company_count_delta").notNull(),
+    regionsWithCompaniesDelta: integer("regions_with_companies_delta").notNull(),
+    domesticOwnedDelta: integer("domestic_owned_delta").notNull(),
+    foreignOwnedDelta: integer("foreign_owned_delta").notNull(),
+    uniqueOwnerCountriesDelta: integer("unique_owner_countries_delta").notNull(),
+    gainedCompaniesCount: integer("gained_companies_count").notNull(),
+    lostCompaniesCount: integer("lost_companies_count").notNull(),
+    fromIncomeTax: doublePrecision("from_income_tax"),
+    toIncomeTax: doublePrecision("to_income_tax"),
+    incomeTaxDelta: doublePrecision("income_tax_delta"),
+    fromMarketTax: doublePrecision("from_market_tax"),
+    toMarketTax: doublePrecision("to_market_tax"),
+    marketTaxDelta: doublePrecision("market_tax_delta"),
+    fromSelfWorkTax: doublePrecision("from_self_work_tax"),
+    toSelfWorkTax: doublePrecision("to_self_work_tax"),
+    selfWorkTaxDelta: doublePrecision("self_work_tax_delta"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.fromSnapshotId, table.toSnapshotId, table.countryId] }),
+    index("country_deltas_pair_country_code_idx").on(
+      table.fromSnapshotId,
+      table.toSnapshotId,
+      table.countryCode,
+    ),
+  ],
+);
+
+export const regionDeltas = pgTable(
+  "region_deltas",
+  {
+    fromSnapshotId: uuid("from_snapshot_id")
+      .references(() => snapshots.id, { onDelete: "cascade" })
+      .notNull(),
+    toSnapshotId: uuid("to_snapshot_id")
+      .references(() => snapshots.id, { onDelete: "cascade" })
+      .notNull(),
+    regionId: text("region_id").notNull(),
+    regionCode: text("region_code").notNull(),
+    regionName: text("region_name").notNull(),
+    countryId: text("country_id").notNull(),
+    countryCode: text("country_code").notNull(),
+    countryName: text("country_name").notNull(),
+    fromCompanyCount: integer("from_company_count").notNull(),
+    toCompanyCount: integer("to_company_count").notNull(),
+    companyCountDelta: integer("company_count_delta").notNull(),
+    domesticOwnedDelta: integer("domestic_owned_delta").notNull(),
+    foreignOwnedDelta: integer("foreign_owned_delta").notNull(),
+    uniqueOwnerCountriesDelta: integer("unique_owner_countries_delta").notNull(),
+    gainedCompaniesCount: integer("gained_companies_count").notNull(),
+    lostCompaniesCount: integer("lost_companies_count").notNull(),
+    netFlow: integer("net_flow").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.fromSnapshotId, table.toSnapshotId, table.regionId] }),
+    index("region_deltas_pair_region_code_idx").on(
+      table.fromSnapshotId,
+      table.toSnapshotId,
+      table.regionCode,
+    ),
+  ],
+);
+
+export const snapshotArchives = pgTable(
+  "snapshot_archives",
+  {
+    snapshotId: uuid("snapshot_id")
+      .references(() => snapshots.id, { onDelete: "cascade" })
+      .primaryKey(),
+    archiveStatus: snapshotArchiveStatusEnum("archive_status")
+      .default("pending")
+      .notNull(),
+    bucketName: text("bucket_name"),
+    objectPrefix: text("object_prefix"),
+    manifestKey: text("manifest_key"),
+    manifestEtag: text("manifest_etag"),
+    totalBytes: integer("total_bytes"),
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }),
+    dbPrunedAt: timestamp("db_pruned_at", { withTimezone: true }),
+    lastError: text("last_error"),
+  },
+  (table) => [index("snapshot_archives_status_idx").on(table.archiveStatus)],
 );
 
 export const appState = pgTable("app_state", {

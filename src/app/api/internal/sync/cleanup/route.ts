@@ -1,0 +1,56 @@
+import { NextResponse } from "next/server";
+
+import { hasDatabaseUrl } from "@/lib/db/client";
+import { hasValidCronSecret } from "@/lib/sync/auth";
+import { runCleanupPass } from "@/lib/sync/service";
+
+export const runtime = "nodejs";
+export const maxDuration = 300;
+
+export async function GET(request: Request) {
+  if (!hasValidCronSecret(request)) {
+    return NextResponse.json({ ok: false, message: "Unauthorized" }, { status: 401 });
+  }
+
+  if (!hasDatabaseUrl()) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message: "DATABASE_URL is not configured.",
+      },
+      { status: 500 },
+    );
+  }
+
+  try {
+    const result = await runCleanupPass();
+
+    if (!result.ok) {
+      return NextResponse.json(
+        {
+          ok: true,
+          status: "busy",
+          message: "A sync or cleanup pass is already running.",
+        },
+        { status: 202 },
+      );
+    }
+
+    return NextResponse.json(
+      {
+        ok: true,
+        status: result.status,
+        summary: result.summary,
+      },
+      { status: result.status === "idle" ? 200 : 202 },
+    );
+  } catch (error) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message: error instanceof Error ? error.message : "Cleanup failed.",
+      },
+      { status: 500 },
+    );
+  }
+}
