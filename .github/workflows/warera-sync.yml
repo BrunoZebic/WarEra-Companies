@@ -14,13 +14,34 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Trigger protected sync route
+      - name: Trigger protected sync route until snapshot completes
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           test -n "$APP_URL"
           test -n "$CRON_SECRET"
-          curl --fail --show-error --silent \
-            --header "Authorization: Bearer ${CRON_SECRET}" \
-            "${APP_URL}/api/internal/sync"
+
+          for attempt in $(seq 1 20); do
+            response=$(curl --show-error --silent \
+              --header "Authorization: Bearer ${CRON_SECRET}" \
+              "${APP_URL}/api/internal/sync")
+
+            echo "Sync pass ${attempt}: ${response}"
+
+            status=$(node -e "const data = JSON.parse(process.argv[1]); process.stdout.write(data.status || 'unknown');" "${response}")
+
+            if [ "$status" = "completed" ]; then
+              exit 0
+            fi
+
+            if [ "$status" != "running" ]; then
+              echo "Unexpected sync response"
+              exit 1
+            fi
+
+            sleep 2
+          done
+
+          echo "Sync did not finish within 20 passes."
+          exit 1

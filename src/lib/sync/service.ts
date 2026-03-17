@@ -1,17 +1,23 @@
 import "server-only";
 
-import { and, desc, eq, lt, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 
 import { getDb, withSyncAdvisoryLock } from "@/lib/db/client";
 import {
   appState,
   companySnapshotRows,
+  countryAggregates,
   countryReference,
+  regionAggregates,
   regionReference,
   snapshots,
   syncRuns,
 } from "@/lib/db/schema";
-import { CURRENT_SNAPSHOT_STATE_KEY, SYNC_STALE_AFTER_MS } from "@/lib/sync/constants";
+import {
+  CURRENT_SNAPSHOT_STATE_KEY,
+  SYNC_MAX_PAGES_PER_PASS,
+  SYNC_STALE_AFTER_MS,
+} from "@/lib/sync/constants";
 import {
   normalizeCompanySnapshotRow,
   normalizeCountries,
@@ -24,12 +30,32 @@ import {
 } from "@/lib/sync/normalize";
 import { getWareraClient } from "@/lib/warera/client";
 
-export type SyncSummary = {
-  snapshotId: string;
+type SyncPhase =
+  | "load_reference_data"
+  | "sync_company_pages"
+  | "build_aggregates"
+  | "promote_snapshot";
+
+type ActiveRun = {
   runId: string;
+  snapshotId: string;
+  phase: SyncPhase;
+  phaseCursor: string | null;
   companyPagesProcessed: number;
   companyRowsWritten: number;
   uniqueUsersFetched: number;
+};
+
+export type SyncSummary = {
+  snapshotId: string;
+  runId: string;
+  phase: "sync_company_pages" | "build_aggregates" | "promote_snapshot";
+  companyPagesProcessed: number;
+  companyRowsWritten: number;
+  uniqueUsersFetched: number;
+  passPagesProcessed: number;
+  resumedExistingRun: boolean;
+  hasMoreWork: boolean;
   durationMs: number;
 };
 
@@ -45,24 +71,63 @@ function chunk<T>(items: T[], size: number) {
   return result;
 }
 
+function buildSummary(input: {
+  run: ActiveRun;
+  phase: SyncSummary["phase"];
+  passPagesProcessed: number;
+  resumedExistingRun: boolean;
+  hasMoreWork: boolean;
+  startedAt: number;
+}) {
+  return {
+    snapshotId: input.run.snapshotId,
+    runId: input.run.runId,
+    phase: input.phase,
+    companyPagesProcessed: input.run.companyPagesProcessed,
+    companyRowsWritten: input.run.companyRowsWritten,
+    uniqueUsersFetched: input.run.uniqueUsersFetched,
+    passPagesProcessed: input.passPagesProcessed,
+    resumedExistingRun: input.resumedExistingRun,
+    hasMoreWork: input.hasMoreWork,
+    durationMs: Date.now() - input.startedAt,
+  } satisfies SyncSummary;
+}
+
 async function markStaleRuns() {
   const db = getDb();
+  const now = new Date();
   const staleBefore = new Date(Date.now() - SYNC_STALE_AFTER_MS);
 
-  await db
+  const staleRuns = await db
     .update(syncRuns)
     .set({
       status: "stale",
-      finishedAt: new Date(),
-      updatedAt: new Date(),
+      finishedAt: now,
+      updatedAt: now,
       errorMessage: STALE_MESSAGE,
     })
-    .where(and(eq(syncRuns.status, "running"), lt(syncRuns.updatedAt, staleBefore)));
+    .where(and(eq(syncRuns.status, "running"), lt(syncRuns.updatedAt, staleBefore)))
+    .returning({ snapshotId: syncRuns.snapshotId });
+
+  const snapshotIds = Array.from(
+    new Set(staleRuns.map((run) => run.snapshotId).filter(Boolean)),
+  );
+
+  if (snapshotIds.length > 0) {
+    await db
+      .update(snapshots)
+      .set({
+        status: "failed",
+        completedAt: now,
+        notes: STALE_MESSAGE,
+      })
+      .where(inArray(snapshots.id, snapshotIds));
+  }
 }
 
 async function updateRunProgress(input: {
   runId: string;
-  phase: "load_reference_data" | "sync_company_pages" | "build_aggregates" | "promote_snapshot";
+  phase: SyncPhase;
   phaseCursor?: string | null;
   companyPagesProcessed?: number;
   companyRowsWritten?: number;
@@ -74,7 +139,7 @@ async function updateRunProgress(input: {
     .update(syncRuns)
     .set({
       phase: input.phase,
-      phaseCursor: input.phaseCursor ?? null,
+      phaseCursor: input.phaseCursor === undefined ? null : input.phaseCursor,
       companyPagesProcessed: input.companyPagesProcessed,
       companyRowsWritten: input.companyRowsWritten,
       uniqueUsersFetched: input.uniqueUsersFetched,
@@ -93,6 +158,13 @@ async function bulkInsertCompanies(rows: CompanySnapshotRowInput[]) {
   for (const batch of chunk(rows, 250)) {
     await db.insert(companySnapshotRows).values(batch);
   }
+}
+
+async function clearAggregates(snapshotId: string) {
+  const db = getDb();
+
+  await db.delete(regionAggregates).where(eq(regionAggregates.snapshotId, snapshotId));
+  await db.delete(countryAggregates).where(eq(countryAggregates.snapshotId, snapshotId));
 }
 
 async function buildCountryAggregates(snapshotId: string) {
@@ -354,154 +426,379 @@ async function failRun(input: {
   }
 }
 
-export async function runFullSync(source: "manual" | "scheduled" = "manual") {
-  await markStaleRuns();
+async function getActiveRun() {
+  const db = getDb();
+  const run = await db.query.syncRuns.findFirst({
+    where: eq(syncRuns.status, "running"),
+    orderBy: [desc(syncRuns.startedAt)],
+  });
 
-  const lockResult = await withSyncAdvisoryLock(async () => {
-    const db = getDb();
-    const client = getWareraClient();
-    const startedAt = Date.now();
+  if (!run) {
+    return null;
+  }
 
-    let snapshotId: string | null = null;
-    let runId: string | null = null;
+  return {
+    runId: run.id,
+    snapshotId: run.snapshotId,
+    phase: run.phase,
+    phaseCursor: run.phaseCursor,
+    companyPagesProcessed: run.companyPagesProcessed,
+    companyRowsWritten: run.companyRowsWritten,
+    uniqueUsersFetched: run.uniqueUsersFetched,
+  } satisfies ActiveRun;
+}
 
-    try {
-      const [snapshot] = await db
-        .insert(snapshots)
-        .values({
-          source,
-          status: "staging",
-        })
-        .returning({ id: snapshots.id });
+async function createSyncRun(source: "manual" | "scheduled") {
+  const db = getDb();
 
-      const activeSnapshotId = snapshot.id;
-      snapshotId = activeSnapshotId;
+  const [snapshot] = await db
+    .insert(snapshots)
+    .values({
+      source,
+      status: "staging",
+    })
+    .returning({ id: snapshots.id });
 
-      const [syncRun] = await db
-        .insert(syncRuns)
-        .values({
-          snapshotId: activeSnapshotId,
-          status: "running",
-          phase: "load_reference_data",
-        })
-        .returning({ id: syncRuns.id });
+  const [syncRun] = await db
+    .insert(syncRuns)
+    .values({
+      snapshotId: snapshot.id,
+      status: "running",
+      phase: "load_reference_data",
+    })
+    .returning({ id: syncRuns.id });
 
-      const activeRunId = syncRun.id;
-      runId = activeRunId;
+  return {
+    runId: syncRun.id,
+    snapshotId: snapshot.id,
+    phase: "load_reference_data",
+    phaseCursor: null,
+    companyPagesProcessed: 0,
+    companyRowsWritten: 0,
+    uniqueUsersFetched: 0,
+  } satisfies ActiveRun;
+}
 
-      const countries = await client.country.getAllCountries();
-      const countryRows = normalizeCountries(activeSnapshotId, countries);
-      const countryById = new Map<string, CountryReferenceRowInput>(
-        countryRows.map((country) => [country.countryId, country]),
-      );
+async function loadReferenceMaps(snapshotId: string) {
+  const db = getDb();
 
-      await db.insert(countryReference).values(countryRows);
+  const [countryRows, regionRows] = await Promise.all([
+    db.query.countryReference.findMany({
+      where: eq(countryReference.snapshotId, snapshotId),
+    }),
+    db.query.regionReference.findMany({
+      where: eq(regionReference.snapshotId, snapshotId),
+    }),
+  ]);
 
-      const regions = await client.region.getRegionsObject();
-      const regionRows = normalizeRegions(activeSnapshotId, regions, countryById);
-      const regionById = new Map<string, RegionReferenceRowInput>(
-        regionRows.map((region) => [region.regionId, region]),
-      );
+  return {
+    countryById: new Map<string, CountryReferenceRowInput>(
+      countryRows.map((country) => [country.countryId, country]),
+    ),
+    regionById: new Map<string, RegionReferenceRowInput>(
+      regionRows.map((region) => [region.regionId, region]),
+    ),
+  };
+}
 
-      await db.insert(regionReference).values(regionRows);
+async function ensureReferenceData(snapshotId: string) {
+  const existingReferences = await loadReferenceMaps(snapshotId);
 
-      const ownerCache = new Map<string, OwnerSnapshotInput>();
-      let companyPagesProcessed = 0;
-      let companyRowsWritten = 0;
-      let uniqueUsersFetched = 0;
-      let lastCursor: string | null = null;
+  if (
+    existingReferences.countryById.size > 0 &&
+    existingReferences.regionById.size > 0
+  ) {
+    return existingReferences;
+  }
 
-      await updateRunProgress({
-        runId: activeRunId,
-        phase: "sync_company_pages",
-        companyPagesProcessed,
-        companyRowsWritten,
-        uniqueUsersFetched,
-      });
+  const db = getDb();
+  const client = getWareraClient();
 
-      for await (const page of client.company.getCompanies({
+  const countries = await client.country.getAllCountries();
+  const countryRows = normalizeCountries(snapshotId, countries);
+  const countryById = new Map<string, CountryReferenceRowInput>(
+    countryRows.map((country) => [country.countryId, country]),
+  );
+
+  await db.insert(countryReference).values(countryRows).onConflictDoNothing();
+
+  const regions = await client.region.getRegionsObject();
+  const regionRows = normalizeRegions(snapshotId, regions, countryById);
+  await db.insert(regionReference).values(regionRows).onConflictDoNothing();
+
+  const hydratedReferences = await loadReferenceMaps(snapshotId);
+
+  if (
+    hydratedReferences.countryById.size === 0 ||
+    hydratedReferences.regionById.size === 0
+  ) {
+    throw new Error("Reference data could not be hydrated for the active snapshot.");
+  }
+
+  return hydratedReferences;
+}
+
+async function loadOwnersFromSnapshot(input: {
+  snapshotId: string;
+  userIds: string[];
+  ownerCache: Map<string, OwnerSnapshotInput>;
+}) {
+  if (input.userIds.length === 0) {
+    return;
+  }
+
+  const db = getDb();
+  const existingRows = await db.query.companySnapshotRows.findMany({
+    where: and(
+      eq(companySnapshotRows.snapshotId, input.snapshotId),
+      inArray(companySnapshotRows.ownerUserId, input.userIds),
+    ),
+  });
+
+  for (const row of existingRows) {
+    if (input.ownerCache.has(row.ownerUserId)) {
+      continue;
+    }
+
+    input.ownerCache.set(row.ownerUserId, {
+      ownerUserId: row.ownerUserId,
+      ownerUsername: row.ownerUsername ?? null,
+      ownerCountryId: row.ownerCountryId ?? null,
+      ownerCountryCode: row.ownerCountryCode ?? null,
+      ownerCountryName: row.ownerCountryName ?? null,
+    });
+  }
+}
+
+async function fetchMissingOwnersFromApi(input: {
+  userIds: string[];
+  countryById: Map<string, CountryReferenceRowInput>;
+  ownerCache: Map<string, OwnerSnapshotInput>;
+}) {
+  if (input.userIds.length === 0) {
+    return 0;
+  }
+
+  const client = getWareraClient();
+  const users = await Promise.all(
+    input.userIds.map((userId) => client.user.getUserLite({ userId })),
+  );
+
+  for (const user of users) {
+    input.ownerCache.set(user._id, normalizeOwnerSnapshot(user, input.countryById));
+  }
+
+  return users.length;
+}
+
+async function processCompanyPagesPhase(run: ActiveRun) {
+  if (run.phaseCursor === "") {
+    return {
+      ...run,
+      phaseCursor: "",
+      passPagesProcessed: 0,
+      hasMorePages: false,
+    };
+  }
+
+  const client = getWareraClient();
+  const references = await ensureReferenceData(run.snapshotId);
+  const ownerCache = new Map<string, OwnerSnapshotInput>();
+
+  let companyPagesProcessed = run.companyPagesProcessed;
+  let companyRowsWritten = run.companyRowsWritten;
+  let uniqueUsersFetched = run.uniqueUsersFetched;
+  let lastCursor = run.phaseCursor;
+  let passPagesProcessed = 0;
+
+  const pageIterator = run.phaseCursor
+    ? client.company.getCompanies({
+        perPage: 100,
+        cursor: run.phaseCursor,
+        autoPaginate: true,
+        maxPages: SYNC_MAX_PAGES_PER_PASS,
+      })
+    : client.company.getCompanies({
         perPage: 100,
         autoPaginate: true,
-      })) {
-        companyPagesProcessed += 1;
-        lastCursor = page.cursor || null;
-
-        const companies = await Promise.all(
-          page.items.map((companyId) => client.company.getById({ companyId })),
-        );
-
-        const missingOwnerIds = Array.from(
-          new Set(
-            companies
-              .map((company) => company.user)
-              .filter((userId) => !ownerCache.has(userId)),
-          ),
-        );
-
-        if (missingOwnerIds.length > 0) {
-          const users = await Promise.all(
-            missingOwnerIds.map((userId) => client.user.getUserLite({ userId })),
-          );
-
-          for (const user of users) {
-            ownerCache.set(user._id, normalizeOwnerSnapshot(user, countryById));
-          }
-
-          uniqueUsersFetched += missingOwnerIds.length;
-        }
-
-        const companyRows = companies.map((company) => {
-          const owner = ownerCache.get(company.user);
-
-          if (!owner) {
-            throw new Error(`Missing owner cache entry for user ${company.user}.`);
-          }
-
-          return normalizeCompanySnapshotRow({
-            snapshotId: activeSnapshotId,
-            company,
-            regionById,
-            owner,
-          });
-        });
-
-        await bulkInsertCompanies(companyRows);
-
-        companyRowsWritten += companyRows.length;
-
-        await updateRunProgress({
-          runId: activeRunId,
-          phase: "sync_company_pages",
-          phaseCursor: lastCursor,
-          companyPagesProcessed,
-          companyRowsWritten,
-          uniqueUsersFetched,
-        });
-      }
-
-      await updateRunProgress({
-        runId: activeRunId,
-        phase: "build_aggregates",
-        phaseCursor: lastCursor,
-        companyPagesProcessed,
-        companyRowsWritten,
-        uniqueUsersFetched,
+        maxPages: SYNC_MAX_PAGES_PER_PASS,
       });
 
-      await buildCountryAggregates(activeSnapshotId);
-      await buildRegionAggregates(activeSnapshotId);
-      await promoteSnapshot(activeSnapshotId, activeRunId);
+  for await (const page of pageIterator) {
+    passPagesProcessed += 1;
+    companyPagesProcessed += 1;
+    lastCursor = page.cursor;
+
+    const companies = await Promise.all(
+      page.items.map((companyId) => client.company.getById({ companyId })),
+    );
+
+    const pageOwnerIds = Array.from(new Set(companies.map((company) => company.user)));
+    await loadOwnersFromSnapshot({
+      snapshotId: run.snapshotId,
+      userIds: pageOwnerIds,
+      ownerCache,
+    });
+
+    const missingOwnerIds = pageOwnerIds.filter((userId) => !ownerCache.has(userId));
+    uniqueUsersFetched += await fetchMissingOwnersFromApi({
+      userIds: missingOwnerIds,
+      countryById: references.countryById,
+      ownerCache,
+    });
+
+    const companyRows = companies.map((company) => {
+      const owner = ownerCache.get(company.user);
+
+      if (!owner) {
+        throw new Error(`Missing owner cache entry for user ${company.user}.`);
+      }
+
+      return normalizeCompanySnapshotRow({
+        snapshotId: run.snapshotId,
+        company,
+        regionById: references.regionById,
+        owner,
+      });
+    });
+
+    await bulkInsertCompanies(companyRows);
+    companyRowsWritten += companyRows.length;
+
+    await updateRunProgress({
+      runId: run.runId,
+      phase: "sync_company_pages",
+      phaseCursor: lastCursor,
+      companyPagesProcessed,
+      companyRowsWritten,
+      uniqueUsersFetched,
+    });
+  }
+
+  return {
+    runId: run.runId,
+    snapshotId: run.snapshotId,
+    phase: "sync_company_pages" as const,
+    phaseCursor: lastCursor,
+    companyPagesProcessed,
+    companyRowsWritten,
+    uniqueUsersFetched,
+    passPagesProcessed,
+    hasMorePages: lastCursor !== "",
+  };
+}
+
+export async function runSyncPass(source: "manual" | "scheduled" = "manual") {
+  const lockResult = await withSyncAdvisoryLock(async () => {
+    const startedAt = Date.now();
+    await markStaleRuns();
+
+    let activeRun = await getActiveRun();
+    const resumedExistingRun = Boolean(activeRun);
+
+    try {
+      if (!activeRun) {
+        activeRun = await createSyncRun(source);
+      }
+
+      if (activeRun.phase === "load_reference_data") {
+        await ensureReferenceData(activeRun.snapshotId);
+        await updateRunProgress({
+          runId: activeRun.runId,
+          phase: "sync_company_pages",
+          phaseCursor: activeRun.phaseCursor,
+          companyPagesProcessed: activeRun.companyPagesProcessed,
+          companyRowsWritten: activeRun.companyRowsWritten,
+          uniqueUsersFetched: activeRun.uniqueUsersFetched,
+        });
+
+        activeRun = {
+          ...activeRun,
+          phase: "sync_company_pages",
+        };
+      }
+
+      if (activeRun.phase === "sync_company_pages") {
+        const pageResult = await processCompanyPagesPhase(activeRun);
+
+        activeRun = {
+          runId: pageResult.runId,
+          snapshotId: pageResult.snapshotId,
+          phase: "sync_company_pages",
+          phaseCursor: pageResult.phaseCursor,
+          companyPagesProcessed: pageResult.companyPagesProcessed,
+          companyRowsWritten: pageResult.companyRowsWritten,
+          uniqueUsersFetched: pageResult.uniqueUsersFetched,
+        };
+
+        if (pageResult.hasMorePages) {
+          return {
+            status: "running" as const,
+            summary: buildSummary({
+              run: activeRun,
+              phase: "sync_company_pages",
+              passPagesProcessed: pageResult.passPagesProcessed,
+              resumedExistingRun,
+              hasMoreWork: true,
+              startedAt,
+            }),
+          };
+        }
+
+        await updateRunProgress({
+          runId: activeRun.runId,
+          phase: "build_aggregates",
+          phaseCursor: activeRun.phaseCursor,
+          companyPagesProcessed: activeRun.companyPagesProcessed,
+          companyRowsWritten: activeRun.companyRowsWritten,
+          uniqueUsersFetched: activeRun.uniqueUsersFetched,
+        });
+
+        activeRun = {
+          ...activeRun,
+          phase: "build_aggregates",
+        };
+      }
+
+      if (activeRun.phase === "build_aggregates") {
+        await clearAggregates(activeRun.snapshotId);
+        await buildCountryAggregates(activeRun.snapshotId);
+        await buildRegionAggregates(activeRun.snapshotId);
+
+        await updateRunProgress({
+          runId: activeRun.runId,
+          phase: "promote_snapshot",
+          phaseCursor: activeRun.phaseCursor,
+          companyPagesProcessed: activeRun.companyPagesProcessed,
+          companyRowsWritten: activeRun.companyRowsWritten,
+          uniqueUsersFetched: activeRun.uniqueUsersFetched,
+        });
+
+        activeRun = {
+          ...activeRun,
+          phase: "promote_snapshot",
+        };
+      }
+
+      await promoteSnapshot(activeRun.snapshotId, activeRun.runId);
 
       return {
-        snapshotId: activeSnapshotId,
-        runId: activeRunId,
-        companyPagesProcessed,
-        companyRowsWritten,
-        uniqueUsersFetched,
-        durationMs: Date.now() - startedAt,
-      } satisfies SyncSummary;
+        status: "completed" as const,
+        summary: buildSummary({
+          run: activeRun,
+          phase: "promote_snapshot",
+          passPagesProcessed: 0,
+          resumedExistingRun,
+          hasMoreWork: false,
+          startedAt,
+        }),
+      };
     } catch (error) {
-      await failRun({ snapshotId, runId, error });
+      await failRun({
+        snapshotId: activeRun?.snapshotId ?? null,
+        runId: activeRun?.runId ?? null,
+        error,
+      });
       throw error;
     }
   });
@@ -515,7 +812,8 @@ export async function runFullSync(source: "manual" | "scheduled" = "manual") {
 
   return {
     ok: true as const,
-    summary: lockResult.value,
+    status: lockResult.value.status,
+    summary: lockResult.value.summary,
   };
 }
 

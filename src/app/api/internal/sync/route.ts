@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { hasDatabaseUrl } from "@/lib/db/client";
 import { hasValidCronSecret } from "@/lib/sync/auth";
-import { runFullSync } from "@/lib/sync/service";
+import { runSyncPass } from "@/lib/sync/service";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -23,22 +23,24 @@ export async function GET(request: Request) {
   }
 
   try {
-    const result = await runFullSync("scheduled");
+    const result = await runSyncPass("scheduled");
 
     if (!result.ok) {
       return NextResponse.json(
         {
-          ok: false,
-          message: "A sync is already running.",
+          ok: true,
+          status: "running",
+          message: "A sync pass is already running.",
         },
-        { status: 409 },
+        { status: 202 },
       );
     }
 
     return NextResponse.json({
       ok: true,
+      status: result.status,
       summary: result.summary,
-    });
+    }, { status: result.status === "completed" ? 200 : 202 });
   } catch (error) {
     return NextResponse.json(
       {

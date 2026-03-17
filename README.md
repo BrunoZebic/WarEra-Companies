@@ -35,6 +35,7 @@ Copy `.env.example` to `.env.local` and fill in the values before wiring up the 
 - Status route: `GET /api/internal/sync/status`
 - Auth header: `Authorization: Bearer ${CRON_SECRET}`
 - Scheduler: GitHub Actions every 6 hours
+- Sync runs in repeated passes until the staging snapshot is complete and promoted
 - Snapshot storage: Postgres staging + atomic promotion
 - Locking: Postgres advisory lock
 
