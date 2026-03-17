@@ -237,3 +237,6 @@ export const appState = pgTable("app_state", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
 });
+
+export type CountryAggregateRow = typeof countryAggregates.$inferSelect;
+export type RegionAggregateRow = typeof regionAggregates.$inferSelect;
