@@ -15,6 +15,7 @@ import {
 } from "@/lib/db/schema";
 import {
   CURRENT_SNAPSHOT_STATE_KEY,
+  SYNC_FAILED_RESUME_WINDOW_MS,
   SYNC_MAX_PAGES_PER_PASS,
   SYNC_STALE_AFTER_MS,
 } from "@/lib/sync/constants";
@@ -449,7 +450,7 @@ async function getActiveRun() {
   const resumableFailedRun = await db.query.syncRuns.findFirst({
     where: and(
       eq(syncRuns.status, "failed"),
-      gt(syncRuns.updatedAt, new Date(Date.now() - SYNC_STALE_AFTER_MS)),
+      gt(syncRuns.updatedAt, new Date(Date.now() - SYNC_FAILED_RESUME_WINDOW_MS)),
     ),
     orderBy: [desc(syncRuns.startedAt)],
   });
