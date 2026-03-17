@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, lt, sql } from "drizzle-orm";
 
 import { getDb, withSyncAdvisoryLock } from "@/lib/db/client";
 import {
@@ -428,23 +428,63 @@ async function failRun(input: {
 
 async function getActiveRun() {
   const db = getDb();
-  const run = await db.query.syncRuns.findFirst({
+
+  const runningRun = await db.query.syncRuns.findFirst({
     where: eq(syncRuns.status, "running"),
     orderBy: [desc(syncRuns.startedAt)],
   });
 
-  if (!run) {
+  if (runningRun) {
+    return {
+      runId: runningRun.id,
+      snapshotId: runningRun.snapshotId,
+      phase: runningRun.phase,
+      phaseCursor: runningRun.phaseCursor,
+      companyPagesProcessed: runningRun.companyPagesProcessed,
+      companyRowsWritten: runningRun.companyRowsWritten,
+      uniqueUsersFetched: runningRun.uniqueUsersFetched,
+    } satisfies ActiveRun;
+  }
+
+  const resumableFailedRun = await db.query.syncRuns.findFirst({
+    where: and(
+      eq(syncRuns.status, "failed"),
+      gt(syncRuns.updatedAt, new Date(Date.now() - SYNC_STALE_AFTER_MS)),
+    ),
+    orderBy: [desc(syncRuns.startedAt)],
+  });
+
+  if (!resumableFailedRun) {
     return null;
   }
 
+  await db
+    .update(syncRuns)
+    .set({
+      status: "running",
+      updatedAt: new Date(),
+      finishedAt: null,
+      errorMessage: null,
+    })
+    .where(eq(syncRuns.id, resumableFailedRun.id));
+
+  await db
+    .update(snapshots)
+    .set({
+      status: "staging",
+      completedAt: null,
+      notes: null,
+    })
+    .where(eq(snapshots.id, resumableFailedRun.snapshotId));
+
   return {
-    runId: run.id,
-    snapshotId: run.snapshotId,
-    phase: run.phase,
-    phaseCursor: run.phaseCursor,
-    companyPagesProcessed: run.companyPagesProcessed,
-    companyRowsWritten: run.companyRowsWritten,
-    uniqueUsersFetched: run.uniqueUsersFetched,
+    runId: resumableFailedRun.id,
+    snapshotId: resumableFailedRun.snapshotId,
+    phase: resumableFailedRun.phase,
+    phaseCursor: resumableFailedRun.phaseCursor,
+    companyPagesProcessed: resumableFailedRun.companyPagesProcessed,
+    companyRowsWritten: resumableFailedRun.companyRowsWritten,
+    uniqueUsersFetched: resumableFailedRun.uniqueUsersFetched,
   } satisfies ActiveRun;
 }
 
