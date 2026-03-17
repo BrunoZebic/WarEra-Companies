@@ -44,7 +44,7 @@ export default async function HomePage() {
               <div className="flex gap-3 pt-2">
                 <Link
                   href="/regions"
-                  className="inline-flex items-center gap-2 rounded-full bg-blue px-4 py-2 text-sm font-medium text-stone-950 transition hover:bg-stone-100"
+                  className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm font-medium text-stone-950 transition hover:bg-stone-100"
                 >
                   Regije
                   <ArrowRight className="h-4 w-4" />
