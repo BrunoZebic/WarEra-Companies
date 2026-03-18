@@ -858,9 +858,36 @@ async function buildDeltaPair(input: SnapshotPair) {
   });
 }
 
+async function ensureSnapshotCompletedAt(snapshotId: string) {
+  const db = getDb();
+  const snapshot = await db.query.snapshots.findFirst({
+    where: eq(snapshots.id, snapshotId),
+  });
+
+  if (!snapshot) {
+    throw new Error(`Snapshot ${snapshotId} was not found.`);
+  }
+
+  if (snapshot.completedAt) {
+    return snapshot.completedAt;
+  }
+
+  const completionTime = new Date();
+  const [updatedSnapshot] = await db
+    .update(snapshots)
+    .set({
+      completedAt: completionTime,
+    })
+    .where(eq(snapshots.id, snapshotId))
+    .returning({ completedAt: snapshots.completedAt });
+
+  return updatedSnapshot?.completedAt ?? completionTime;
+}
+
 async function promoteSnapshot(snapshotId: string, runId: string) {
   const db = getDb();
   const now = new Date();
+  const completionTime = await ensureSnapshotCompletedAt(snapshotId);
 
   await db.transaction(async (tx) => {
     await tx
@@ -872,7 +899,7 @@ async function promoteSnapshot(snapshotId: string, runId: string) {
       .update(snapshots)
       .set({
         status: "promoted",
-        completedAt: now,
+        completedAt: completionTime,
       })
       .where(eq(snapshots.id, snapshotId));
 
@@ -1801,6 +1828,7 @@ export async function runSyncPass(source: "manual" | "scheduled" = "manual") {
       }
 
       if (activeRun.phase === "build_deltas") {
+        await ensureSnapshotCompletedAt(activeRun.snapshotId);
         const previousPromotedSnapshot = await getCurrentPromotedSnapshot();
 
         if (previousPromotedSnapshot) {
