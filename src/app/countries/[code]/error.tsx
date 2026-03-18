@@ -1,0 +1,41 @@
+"use client";
+
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
+
+export default function Error({
+  error,
+  reset,
+}: {
+  error: Error & { digest?: string };
+  reset: () => void;
+}) {
+  return (
+    <main className="min-h-screen px-6 py-10 sm:px-10">
+      <div className="mx-auto flex max-w-6xl flex-col gap-8">
+        <div className="rounded-[1.75rem] border border-red-800/30 bg-red-950/20 p-10 text-center">
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-red-400">Greska</p>
+          <h2 className="mt-3 text-2xl font-semibold text-white">Greska pri ucitavanju detalja drzave</h2>
+          <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-slate-400">
+            {error.message || "Nije moguce dohvatiti podatke za ovu drzavu."}
+          </p>
+          <div className="mt-6 flex items-center justify-center gap-3">
+            <button
+              onClick={reset}
+              className="inline-flex items-center rounded-full border border-blue-700/40 bg-blue-900/30 px-5 py-2 text-sm font-medium text-blue-200 transition hover:bg-blue-800/40"
+            >
+              Pokusaj ponovo
+            </button>
+            <Link
+              href="/countries"
+              className="inline-flex items-center gap-2 rounded-full border border-blue-800/50 bg-blue-950/50 px-5 py-2 text-sm font-medium text-blue-300 transition hover:bg-blue-900/50"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Natrag na drzave
+            </Link>
+          </div>
+        </div>
+      </div>
+    </main>
+  );
+}

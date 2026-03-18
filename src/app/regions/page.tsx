@@ -1,13 +1,19 @@
+import { CountryFilterSelect } from "@/components/country-filter-select";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { RegionsTable } from "@/components/regions-table";
 import { SyncStatusCard } from "@/components/sync-status-card";
 import { getRegionsPageData } from "@/lib/db/read-models";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 600;
 
-export default async function RegionsPage() {
-  const data = await getRegionsPageData();
+type RegionsPageProps = {
+  searchParams: Promise<{ country?: string }>;
+};
+
+export default async function RegionsPage({ searchParams }: RegionsPageProps) {
+  const { country } = await searchParams;
+  const data = await getRegionsPageData(country);
 
   return (
     <main className="min-h-screen px-6 py-10 sm:px-10">
@@ -34,7 +40,15 @@ export default async function RegionsPage() {
             description="Pokreni protected sync rutu da bi se izgradile region aggregate tablice."
           />
         ) : (
-          <RegionsTable regions={data.regions} />
+          <>
+            <div className="flex justify-end">
+              <CountryFilterSelect
+                countries={data.availableCountries}
+                currentCountry={country}
+              />
+            </div>
+            <RegionsTable regions={data.regions} />
+          </>
         )}
       </div>
     </main>

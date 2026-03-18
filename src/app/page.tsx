@@ -7,7 +7,7 @@ import { SyncStatusCard } from "@/components/sync-status-card";
 import { getDashboardData } from "@/lib/db/read-models";
 import { formatNumber, formatPercent } from "@/lib/formatters";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 600;
 
 export default async function HomePage() {
   const data = await getDashboardData();

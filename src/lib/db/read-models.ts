@@ -198,26 +198,38 @@ export async function getCountryDetailData(countryCode: string) {
   };
 }
 
-export async function getRegionsPageData() {
+export async function getRegionsPageData(countryCode?: string) {
   const snapshotMeta = await getSnapshotMeta();
 
   if (!snapshotMeta.configured || !snapshotMeta.currentSnapshot) {
     return {
       ...snapshotMeta,
       regions: [],
+      availableCountries: [],
     };
   }
 
   const db = getDb();
+  const snapshotId = snapshotMeta.currentSnapshot.id;
 
-  const regions = await db.query.regionAggregates.findMany({
-    where: eq(regionAggregates.snapshotId, snapshotMeta.currentSnapshot.id),
-    orderBy: [desc(regionAggregates.companyCount), asc(regionAggregates.regionName)],
-  });
+  const [regions, allCountries] = await Promise.all([
+    db.query.regionAggregates.findMany({
+      where: countryCode
+        ? and(eq(regionAggregates.snapshotId, snapshotId), eq(regionAggregates.countryCode, countryCode))
+        : eq(regionAggregates.snapshotId, snapshotId),
+      orderBy: [desc(regionAggregates.companyCount), asc(regionAggregates.regionName)],
+    }),
+    db.query.countryAggregates.findMany({
+      where: eq(countryAggregates.snapshotId, snapshotId),
+      orderBy: [asc(countryAggregates.countryName)],
+      columns: { countryCode: true, countryName: true },
+    }),
+  ]);
 
   return {
     ...snapshotMeta,
     regions,
+    availableCountries: allCountries.map((c) => ({ code: c.countryCode, name: c.countryName })),
   };
 }
 
@@ -248,6 +260,7 @@ export async function getRegionDetailData(regionCode: string) {
         eq(companySnapshotRows.regionCode, regionCode),
       ),
       orderBy: [asc(companySnapshotRows.companyName)],
+      limit: 100,
     }),
   ]);
 

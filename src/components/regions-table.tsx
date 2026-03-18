@@ -79,7 +79,6 @@ function compareRegions(
 export function RegionsTable({ regions }: RegionsTableProps) {
   const [sortKey, setSortKey] = useState<RegionsSortKey>("companyCount");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
-  const [countryFilter, setCountryFilter] = useState("all");
 
   function handleSort(nextKey: RegionsSortKey) {
     if (nextKey === sortKey) {
@@ -91,56 +90,22 @@ export function RegionsTable({ regions }: RegionsTableProps) {
     setSortDirection(defaultDirection(nextKey));
   }
 
-  const availableCountries = [...regions]
-    .sort((a, b) => a.countryName.localeCompare(b.countryName, "hr-HR"))
-    .filter(
-      (region, index, items) =>
-        index === items.findIndex((item) => item.countryCode === region.countryCode),
-    )
-    .map((region) => ({
-      code: region.countryCode,
-      name: region.countryName,
-    }));
-
-  const filteredRegions =
-    countryFilter === "all"
-      ? regions
-      : regions.filter((region) => region.countryCode === countryFilter);
-
-  const sortedRegions = [...filteredRegions].sort((a, b) =>
+  const sortedRegions = [...regions].sort((a, b) =>
     compareRegions(a, b, sortKey, sortDirection),
   );
 
   return (
     <section className="overflow-hidden rounded-[1.75rem] border border-blue-800/30 bg-blue-950/40">
-      <div className="flex flex-col gap-4 border-b border-blue-900/40 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="space-y-1">
-          <p className="text-sm text-slate-400">
-            Sortirano po{" "}
-            <span className="font-medium text-blue-200">{SORT_LABELS[sortKey]}</span>{" "}
-            ({sortDirection === "asc" ? "uzlazno" : "silazno"})
-          </p>
-          <p className="text-sm text-slate-500">
-            Prikazano regija:{" "}
-            <span className="font-medium text-blue-200">{sortedRegions.length}</span>
-          </p>
-        </div>
-
-        <label className="flex items-center gap-3 text-sm text-slate-400">
-          <span className="font-medium text-blue-200">Filtriraj po drzavi</span>
-          <select
-            value={countryFilter}
-            onChange={(event) => setCountryFilter(event.target.value)}
-            className="rounded-full border border-blue-800/50 bg-blue-950 px-4 py-2 text-sm text-blue-100 outline-none transition focus:border-blue-500"
-          >
-            <option value="all">Sve drzave</option>
-            {availableCountries.map((country) => (
-              <option key={country.code} value={country.code}>
-                {country.name}
-              </option>
-            ))}
-          </select>
-        </label>
+      <div className="flex items-center justify-between gap-4 border-b border-blue-900/40 px-5 py-4">
+        <p className="text-sm text-slate-400">
+          Sortirano po{" "}
+          <span className="font-medium text-blue-200">{SORT_LABELS[sortKey]}</span>{" "}
+          ({sortDirection === "asc" ? "uzlazno" : "silazno"})
+        </p>
+        <p className="text-sm text-slate-500">
+          Prikazano regija:{" "}
+          <span className="font-medium text-blue-200">{sortedRegions.length}</span>
+        </p>
       </div>
 
       <div className="overflow-x-auto">

@@ -4,7 +4,7 @@ import { PageHeader } from "@/components/page-header";
 import { SyncStatusCard } from "@/components/sync-status-card";
 import { getCountriesPageData } from "@/lib/db/read-models";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 600;
 
 export default async function CountriesPage() {
   const data = await getCountriesPageData();

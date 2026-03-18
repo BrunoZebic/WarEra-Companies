@@ -7,7 +7,7 @@ import { SyncStatusCard } from "@/components/sync-status-card";
 import { getRegionDetailData } from "@/lib/db/read-models";
 import { formatDecimal, formatNumber, formatPercent } from "@/lib/formatters";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 600;
 
 type RegionDetailPageProps = {
   params: Promise<{
