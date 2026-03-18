@@ -22,14 +22,20 @@ jobs:
           test -n "$APP_URL"
           test -n "$CRON_SECRET"
 
-          for attempt in $(seq 1 20); do
-            response=$(curl --show-error --silent \
+          sync_deadline=$(( $(date +%s) + 660 ))
+          attempt=0
+
+          while [ "$(date +%s)" -lt "$sync_deadline" ]; do
+            attempt=$((attempt + 1))
+
+            response=$(curl --show-error --silent --fail-with-body \
               --header "Authorization: Bearer ${CRON_SECRET}" \
               "${APP_URL}/api/internal/sync")
 
-            echo "Sync pass ${attempt}: ${response}"
+            echo "Sync attempt ${attempt}: ${response}"
 
             status=$(node -e "const data = JSON.parse(process.argv[1]); process.stdout.write(data.status || 'unknown');" "${response}")
+            reason=$(node -e "const data = JSON.parse(process.argv[1]); process.stdout.write(data.reason || '');" "${response}")
 
             if [ "$status" = "completed" ]; then
               exit 0
@@ -40,10 +46,16 @@ jobs:
               exit 1
             fi
 
+            if [ "$reason" = "sync-already-running" ]; then
+              echo "Sync pass is still holding the advisory lock. Waiting 10 seconds before retrying."
+              sleep 10
+              continue
+            fi
+
             sleep 2
           done
 
-          echo "Sync did not finish within 20 passes."
+          echo "Sync did not finish before the workflow deadline."
           exit 1
 
       - name: Run cleanup until retention work is idle
@@ -54,12 +66,17 @@ jobs:
           test -n "$APP_URL"
           test -n "$CRON_SECRET"
 
-          for attempt in $(seq 1 20); do
-            response=$(curl --show-error --silent \
+          cleanup_deadline=$(( $(date +%s) + 180 ))
+          attempt=0
+
+          while [ "$(date +%s)" -lt "$cleanup_deadline" ]; do
+            attempt=$((attempt + 1))
+
+            response=$(curl --show-error --silent --fail-with-body \
               --header "Authorization: Bearer ${CRON_SECRET}" \
               "${APP_URL}/api/internal/sync/cleanup")
 
-            echo "Cleanup pass ${attempt}: ${response}"
+            echo "Cleanup attempt ${attempt}: ${response}"
 
             status=$(node -e "const data = JSON.parse(process.argv[1]); process.stdout.write(data.status || 'unknown');" "${response}")
 
@@ -72,8 +89,8 @@ jobs:
               exit 1
             fi
 
-            sleep 2
+            sleep 10
           done
 
-          echo "Cleanup did not settle within 20 passes."
+          echo "Cleanup did not settle before the workflow deadline."
           exit 1

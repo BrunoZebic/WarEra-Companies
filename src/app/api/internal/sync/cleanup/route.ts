@@ -30,6 +30,7 @@ export async function GET(request: Request) {
         {
           ok: true,
           status: "busy",
+          reason: result.reason,
           message: "A sync or cleanup pass is already running.",
         },
         { status: 202 },

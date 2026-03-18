@@ -30,6 +30,7 @@ export async function GET(request: Request) {
         {
           ok: true,
           status: "running",
+          reason: result.reason,
           message: "A sync pass is already running.",
         },
         { status: 202 },
