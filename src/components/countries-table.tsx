@@ -94,21 +94,21 @@ export function CountriesTable({ countries }: CountriesTableProps) {
   );
 
   return (
-    <section className="overflow-hidden rounded-[1.75rem] border border-stone-200 bg-white/80">
-      <div className="flex items-center justify-between gap-4 border-b border-stone-100 px-5 py-4">
-        <p className="text-sm text-stone-600">
+    <section className="overflow-hidden rounded-[1.75rem] border border-blue-800/30 bg-blue-950/40">
+      <div className="flex items-center justify-between gap-4 border-b border-blue-900/40 px-5 py-4">
+        <p className="text-sm text-slate-400">
           Sortirano po{" "}
-          <span className="font-medium text-stone-950">{SORT_LABELS[sortKey]}</span>{" "}
+          <span className="font-medium text-blue-200">{SORT_LABELS[sortKey]}</span>{" "}
           ({sortDirection === "asc" ? "uzlazno" : "silazno"})
         </p>
-        <p className="text-sm text-stone-500">
-          Ukupno drzava: <span className="font-medium text-stone-950">{countries.length}</span>
+        <p className="text-sm text-slate-500">
+          Ukupno drzava: <span className="font-medium text-blue-200">{countries.length}</span>
         </p>
       </div>
 
       <div className="overflow-x-auto">
         <table className="min-w-full text-left text-sm">
-          <thead className="bg-stone-50 text-stone-500">
+          <thead className="bg-blue-950/60 text-slate-500">
             <tr>
               <th className="px-5 py-4">
                 <TableSortButton
@@ -194,24 +194,24 @@ export function CountriesTable({ countries }: CountriesTableProps) {
           </thead>
           <tbody>
             {sortedCountries.map((country) => (
-              <tr key={country.countryId} className="border-t border-stone-100">
+              <tr key={country.countryId} className="border-t border-blue-900/30">
                 <td className="px-5 py-4">
                   <Link
                     href={`/countries/${country.countryCode}`}
-                    className="font-medium text-stone-950 hover:text-emerald-900"
+                    className="font-medium text-blue-100 hover:text-blue-400"
                   >
                     {country.countryName}
                   </Link>
                 </td>
-                <td className="px-5 py-4">{formatPercent(country.incomeTax)}</td>
-                <td className="px-5 py-4">{formatPercent(country.marketTax)}</td>
-                <td className="px-5 py-4">{formatPercent(country.selfWorkTax)}</td>
-                <td className="px-5 py-4">{formatNumber(country.companyCount)}</td>
-                <td className="px-5 py-4">{formatNumber(country.regionsWithCompanies)}</td>
-                <td className="px-5 py-4">{formatNumber(country.domesticOwnedCount)}</td>
-                <td className="px-5 py-4">{formatNumber(country.foreignOwnedCount)}</td>
-                <td className="px-5 py-4">{formatNumber(country.uniqueOwnerCountries)}</td>
-                <td className="px-5 py-4">
+                <td className="px-5 py-4 text-slate-300">{formatPercent(country.incomeTax)}</td>
+                <td className="px-5 py-4 text-slate-300">{formatPercent(country.marketTax)}</td>
+                <td className="px-5 py-4 text-slate-300">{formatPercent(country.selfWorkTax)}</td>
+                <td className="px-5 py-4 text-slate-300">{formatNumber(country.companyCount)}</td>
+                <td className="px-5 py-4 text-slate-300">{formatNumber(country.regionsWithCompanies)}</td>
+                <td className="px-5 py-4 text-slate-300">{formatNumber(country.domesticOwnedCount)}</td>
+                <td className="px-5 py-4 text-slate-300">{formatNumber(country.foreignOwnedCount)}</td>
+                <td className="px-5 py-4 text-slate-300">{formatNumber(country.uniqueOwnerCountries)}</td>
+                <td className="px-5 py-4 text-slate-300">
                   {country.topOwnerCountryName ?? "Nema podatka"}
                 </td>
               </tr>

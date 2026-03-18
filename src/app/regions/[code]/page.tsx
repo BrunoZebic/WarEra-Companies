@@ -70,47 +70,47 @@ export default async function RegionDetailPage({
             </section>
 
             <section className="grid gap-5 lg:grid-cols-[0.75fr_1.25fr]">
-              <article className="rounded-[1.75rem] border border-stone-200 bg-white/80 p-6">
-                <h2 className="text-xl font-semibold text-stone-950">
+              <article className="rounded-[1.75rem] border border-blue-800/30 bg-blue-950/40 p-6">
+                <h2 className="text-xl font-semibold text-white">
                   Ownership sazetak
                 </h2>
                 <dl className="mt-5 space-y-3 text-sm">
-                  <div className="flex items-center justify-between gap-4 border-b border-stone-100 pb-3">
-                    <dt className="text-stone-500">Domace vlasnistvo</dt>
-                    <dd className="font-medium text-stone-950">
+                  <div className="flex items-center justify-between gap-4 border-b border-blue-900/40 pb-3">
+                    <dt className="text-slate-400">Domace vlasnistvo</dt>
+                    <dd className="font-medium text-blue-100">
                       {formatNumber(data.region.domesticOwnedCount)}
                     </dd>
                   </div>
-                  <div className="flex items-center justify-between gap-4 border-b border-stone-100 pb-3">
-                    <dt className="text-stone-500">Strano vlasnistvo</dt>
-                    <dd className="font-medium text-stone-950">
+                  <div className="flex items-center justify-between gap-4 border-b border-blue-900/40 pb-3">
+                    <dt className="text-slate-400">Strano vlasnistvo</dt>
+                    <dd className="font-medium text-blue-100">
                       {formatNumber(data.region.foreignOwnedCount)}
                     </dd>
                   </div>
-                  <div className="flex items-center justify-between gap-4 border-b border-stone-100 pb-3">
-                    <dt className="text-stone-500">Unique owner countries</dt>
-                    <dd className="font-medium text-stone-950">
+                  <div className="flex items-center justify-between gap-4 border-b border-blue-900/40 pb-3">
+                    <dt className="text-slate-400">Unique owner countries</dt>
+                    <dd className="font-medium text-blue-100">
                       {formatNumber(data.region.uniqueOwnerCountries)}
                     </dd>
                   </div>
                   <div className="flex items-center justify-between gap-4">
-                    <dt className="text-stone-500">Top owner country</dt>
-                    <dd className="font-medium text-stone-950">
+                    <dt className="text-slate-400">Top owner country</dt>
+                    <dd className="font-medium text-blue-100">
                       {data.region.topOwnerCountryName ?? "Nema podatka"}
                     </dd>
                   </div>
                 </dl>
               </article>
 
-              <article className="overflow-hidden rounded-[1.75rem] border border-stone-200 bg-white/80">
-                <div className="border-b border-stone-100 px-6 py-5">
-                  <h2 className="text-xl font-semibold text-stone-950">
+              <article className="overflow-hidden rounded-[1.75rem] border border-blue-800/30 bg-blue-950/40">
+                <div className="border-b border-blue-900/40 px-6 py-5">
+                  <h2 className="text-xl font-semibold text-white">
                     Firme u regiji
                   </h2>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="min-w-full text-left text-sm">
-                    <thead className="bg-stone-50 text-stone-500">
+                    <thead className="bg-blue-950/60 text-slate-500">
                       <tr>
                         <th className="px-5 py-4 font-medium">Firma</th>
                         <th className="px-5 py-4 font-medium">Item</th>
@@ -122,19 +122,19 @@ export default async function RegionDetailPage({
                     </thead>
                     <tbody>
                       {data.companies.map((company) => (
-                        <tr key={company.companyId} className="border-t border-stone-100">
-                          <td className="px-5 py-4 font-medium text-stone-950">
+                        <tr key={company.companyId} className="border-t border-blue-900/30">
+                          <td className="px-5 py-4 font-medium text-blue-100">
                             {company.companyName}
                           </td>
-                          <td className="px-5 py-4">{company.itemCode ?? "-"}</td>
-                          <td className="px-5 py-4">{company.ownerUsername ?? "-"}</td>
-                          <td className="px-5 py-4">
+                          <td className="px-5 py-4 text-slate-300">{company.itemCode ?? "-"}</td>
+                          <td className="px-5 py-4 text-slate-300">{company.ownerUsername ?? "-"}</td>
+                          <td className="px-5 py-4 text-slate-300">
                             {company.ownerCountryName ?? "Nema podatka"}
                           </td>
-                          <td className="px-5 py-4">
+                          <td className="px-5 py-4 text-slate-300">
                             {formatNumber(company.workerCount)}
                           </td>
-                          <td className="px-5 py-4">
+                          <td className="px-5 py-4 text-slate-300">
                             {formatNumber(Math.round(company.estimatedValue ?? 0))}
                           </td>
                         </tr>

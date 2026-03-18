@@ -15,43 +15,43 @@ export default async function HomePage() {
   return (
     <main className="min-h-screen px-6 py-10 sm:px-10">
       <div className="mx-auto flex max-w-6xl flex-col gap-8">
-        <section className="rounded-[2rem] border border-black/10 bg-white/80 p-8 shadow-[0_20px_80px_rgba(15,23,42,0.08)] backdrop-blur">
+        <section className="rounded-[2rem] border border-blue-800/30 bg-blue-950/40 p-8 shadow-[0_20px_80px_rgba(0,0,0,0.5)] backdrop-blur">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
             <div className="max-w-3xl space-y-4">
-              <p className="inline-flex items-center gap-2 rounded-full border border-emerald-700/20 bg-emerald-700/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-emerald-900">
+              <p className="inline-flex items-center gap-2 rounded-full border border-blue-500/30 bg-blue-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-blue-400">
                 <Globe2 className="h-3.5 w-3.5" />
                 Warera analytics
               </p>
-              <h1 className="text-4xl font-semibold tracking-tight text-stone-950 sm:text-5xl">
+              <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
                 Pregled firmi, vlasnistva i poreza u Wareri.
               </h1>
-              <p className="max-w-2xl text-base leading-7 text-stone-700 sm:text-lg">
+              <p className="max-w-2xl text-base leading-7 text-blue-200 sm:text-lg">
                 Dashboard cita zadnji promovirani snapshot iz baze i prikazuje
                 broj firmi po drzavama i regijama, plus vlasnicku strukturu po
                 trenutnoj Warera drzavi vlasnika.
               </p>
             </div>
 
-            <div className="grid gap-3 rounded-3xl border border-stone-200 bg-stone-950 p-5 text-stone-50 sm:min-w-80">
-              <div className="flex items-center gap-3 text-sm text-stone-300">
-                <Building2 className="h-4 w-4 text-emerald-300" />
+            <div className="grid gap-3 rounded-3xl border border-blue-700/30 bg-blue-950/80 p-5 text-blue-50 sm:min-w-80">
+              <div className="flex items-center gap-3 text-sm text-blue-300">
+                <Building2 className="h-4 w-4 text-blue-400" />
                 Snapshot pipeline koristi Postgres + Warera SDK
               </div>
-              <div className="flex items-center gap-3 text-sm text-stone-300">
-                <Flag className="h-4 w-4 text-amber-300" />
+              <div className="flex items-center gap-3 text-sm text-blue-300">
+                <Flag className="h-4 w-4 text-blue-300" />
                 Sync je spreman za vanjski scheduler svakih 6 sati
               </div>
               <div className="flex gap-3 pt-2">
                 <Link
                   href="/regions"
-                  className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm font-medium text-stone-950 transition hover:bg-stone-100"
+                  className="inline-flex items-center gap-2 rounded-full border border-blue-400/30 bg-blue-500/15 px-4 py-2 text-sm font-medium text-blue-100 transition hover:bg-blue-500/25"
                 >
                   Regije
                   <ArrowRight className="h-4 w-4" />
                 </Link>
                 <Link
                   href="/countries"
-                  className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/10"
+                  className="inline-flex items-center gap-2 rounded-full border border-blue-700/40 px-4 py-2 text-sm font-medium text-blue-300 transition hover:bg-blue-800/30"
                 >
                   Drzave
                 </Link>
@@ -98,19 +98,19 @@ export default async function HomePage() {
             </section>
 
             <section className="grid gap-5 lg:grid-cols-2">
-              <article className="rounded-[1.75rem] border border-stone-200 bg-white/80 p-6">
+              <article className="rounded-[1.75rem] border border-blue-800/30 bg-blue-950/40 p-6">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <h2 className="text-xl font-semibold text-stone-950">
+                    <h2 className="text-xl font-semibold text-white">
                       Top drzave po broju firmi
                     </h2>
-                    <p className="mt-1 text-sm text-stone-600">
+                    <p className="mt-1 text-sm text-slate-400">
                       Usporedba company counta i income taxa.
                     </p>
                   </div>
                   <Link
                     href="/countries"
-                    className="text-sm font-medium text-emerald-900"
+                    className="text-sm font-medium text-blue-400 hover:text-blue-300"
                   >
                     Sve drzave
                   </Link>
@@ -118,7 +118,7 @@ export default async function HomePage() {
 
                 <div className="mt-5 overflow-x-auto">
                   <table className="min-w-full text-left text-sm">
-                    <thead className="text-stone-500">
+                    <thead className="text-slate-500">
                       <tr>
                         <th className="pb-3 pr-4 font-medium">Drzava</th>
                         <th className="pb-3 pr-4 font-medium">Firme</th>
@@ -128,18 +128,18 @@ export default async function HomePage() {
                     </thead>
                     <tbody>
                       {data.topCountries.map((country) => (
-                        <tr key={country.countryId} className="border-t border-stone-100">
+                        <tr key={country.countryId} className="border-t border-blue-900/40">
                           <td className="py-3 pr-4">
                             <Link
                               href={`/countries/${country.countryCode}`}
-                              className="font-medium text-stone-950 hover:text-emerald-900"
+                              className="font-medium text-blue-100 hover:text-blue-400"
                             >
                               {country.countryName}
                             </Link>
                           </td>
-                          <td className="py-3 pr-4">{formatNumber(country.companyCount)}</td>
-                          <td className="py-3 pr-4">{formatPercent(country.incomeTax)}</td>
-                          <td className="py-3">
+                          <td className="py-3 pr-4 text-slate-300">{formatNumber(country.companyCount)}</td>
+                          <td className="py-3 pr-4 text-slate-300">{formatPercent(country.incomeTax)}</td>
+                          <td className="py-3 text-slate-300">
                             {country.topOwnerCountryName ?? "Nema podatka"}
                           </td>
                         </tr>
@@ -149,24 +149,24 @@ export default async function HomePage() {
                 </div>
               </article>
 
-              <article className="rounded-[1.75rem] border border-stone-200 bg-white/80 p-6">
+              <article className="rounded-[1.75rem] border border-blue-800/30 bg-blue-950/40 p-6">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <h2 className="text-xl font-semibold text-stone-950">
+                    <h2 className="text-xl font-semibold text-white">
                       Top regije po broju firmi
                     </h2>
-                    <p className="mt-1 text-sm text-stone-600">
+                    <p className="mt-1 text-sm text-slate-400">
                       Najjace regije iz aktivnog snapshota.
                     </p>
                   </div>
-                  <Link href="/regions" className="text-sm font-medium text-emerald-900">
+                  <Link href="/regions" className="text-sm font-medium text-blue-400 hover:text-blue-300">
                     Sve regije
                   </Link>
                 </div>
 
                 <div className="mt-5 overflow-x-auto">
                   <table className="min-w-full text-left text-sm">
-                    <thead className="text-stone-500">
+                    <thead className="text-slate-500">
                       <tr>
                         <th className="pb-3 pr-4 font-medium">Regija</th>
                         <th className="pb-3 pr-4 font-medium">Drzava</th>
@@ -176,18 +176,18 @@ export default async function HomePage() {
                     </thead>
                     <tbody>
                       {data.topRegions.map((region) => (
-                        <tr key={region.regionId} className="border-t border-stone-100">
+                        <tr key={region.regionId} className="border-t border-blue-900/40">
                           <td className="py-3 pr-4">
                             <Link
                               href={`/regions/${region.regionCode}`}
-                              className="font-medium text-stone-950 hover:text-emerald-900"
+                              className="font-medium text-blue-100 hover:text-blue-400"
                             >
                               {region.regionName}
                             </Link>
                           </td>
-                          <td className="py-3 pr-4">{region.countryName}</td>
-                          <td className="py-3 pr-4">{formatNumber(region.companyCount)}</td>
-                          <td className="py-3">{formatPercent(region.incomeTax)}</td>
+                          <td className="py-3 pr-4 text-slate-300">{region.countryName}</td>
+                          <td className="py-3 pr-4 text-slate-300">{formatNumber(region.companyCount)}</td>
+                          <td className="py-3 text-slate-300">{formatPercent(region.incomeTax)}</td>
                         </tr>
                       ))}
                     </tbody>

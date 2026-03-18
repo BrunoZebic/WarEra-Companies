@@ -112,26 +112,26 @@ export function RegionsTable({ regions }: RegionsTableProps) {
   );
 
   return (
-    <section className="overflow-hidden rounded-[1.75rem] border border-stone-200 bg-white/80">
-      <div className="flex flex-col gap-4 border-b border-stone-100 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+    <section className="overflow-hidden rounded-[1.75rem] border border-blue-800/30 bg-blue-950/40">
+      <div className="flex flex-col gap-4 border-b border-blue-900/40 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="space-y-1">
-          <p className="text-sm text-stone-600">
+          <p className="text-sm text-slate-400">
             Sortirano po{" "}
-            <span className="font-medium text-stone-950">{SORT_LABELS[sortKey]}</span>{" "}
+            <span className="font-medium text-blue-200">{SORT_LABELS[sortKey]}</span>{" "}
             ({sortDirection === "asc" ? "uzlazno" : "silazno"})
           </p>
-          <p className="text-sm text-stone-500">
+          <p className="text-sm text-slate-500">
             Prikazano regija:{" "}
-            <span className="font-medium text-stone-950">{sortedRegions.length}</span>
+            <span className="font-medium text-blue-200">{sortedRegions.length}</span>
           </p>
         </div>
 
-        <label className="flex items-center gap-3 text-sm text-stone-600">
-          <span className="font-medium text-stone-950">Filtriraj po drzavi</span>
+        <label className="flex items-center gap-3 text-sm text-slate-400">
+          <span className="font-medium text-blue-200">Filtriraj po drzavi</span>
           <select
             value={countryFilter}
             onChange={(event) => setCountryFilter(event.target.value)}
-            className="rounded-full border border-stone-200 bg-white px-4 py-2 text-sm text-stone-950 outline-none transition focus:border-emerald-600"
+            className="rounded-full border border-blue-800/50 bg-blue-950 px-4 py-2 text-sm text-blue-100 outline-none transition focus:border-blue-500"
           >
             <option value="all">Sve drzave</option>
             {availableCountries.map((country) => (
@@ -145,7 +145,7 @@ export function RegionsTable({ regions }: RegionsTableProps) {
 
       <div className="overflow-x-auto">
         <table className="min-w-full text-left text-sm">
-          <thead className="bg-stone-50 text-stone-500">
+          <thead className="bg-blue-950/60 text-slate-500">
             <tr>
               <th className="px-5 py-4">
                 <TableSortButton
@@ -223,30 +223,30 @@ export function RegionsTable({ regions }: RegionsTableProps) {
           </thead>
           <tbody>
             {sortedRegions.map((region) => (
-              <tr key={region.regionId} className="border-t border-stone-100">
+              <tr key={region.regionId} className="border-t border-blue-900/30">
                 <td className="px-5 py-4">
                   <Link
                     href={`/regions/${region.regionCode}`}
-                    className="font-medium text-stone-950 hover:text-emerald-900"
+                    className="font-medium text-blue-100 hover:text-blue-400"
                   >
                     {region.regionName}
                   </Link>
                 </td>
-                <td className="px-5 py-4">{region.countryName}</td>
-                <td className="px-5 py-4">{formatPercent(region.incomeTax)}</td>
-                <td className="px-5 py-4">{formatDecimal(region.development, 2)}</td>
-                <td className="px-5 py-4">{formatNumber(region.companyCount)}</td>
-                <td className="px-5 py-4">{formatNumber(region.domesticOwnedCount)}</td>
-                <td className="px-5 py-4">{formatNumber(region.foreignOwnedCount)}</td>
-                <td className="px-5 py-4">{formatNumber(region.uniqueOwnerCountries)}</td>
-                <td className="px-5 py-4">
+                <td className="px-5 py-4 text-slate-300">{region.countryName}</td>
+                <td className="px-5 py-4 text-slate-300">{formatPercent(region.incomeTax)}</td>
+                <td className="px-5 py-4 text-slate-300">{formatDecimal(region.development, 2)}</td>
+                <td className="px-5 py-4 text-slate-300">{formatNumber(region.companyCount)}</td>
+                <td className="px-5 py-4 text-slate-300">{formatNumber(region.domesticOwnedCount)}</td>
+                <td className="px-5 py-4 text-slate-300">{formatNumber(region.foreignOwnedCount)}</td>
+                <td className="px-5 py-4 text-slate-300">{formatNumber(region.uniqueOwnerCountries)}</td>
+                <td className="px-5 py-4 text-slate-300">
                   {region.topOwnerCountryName ?? "Nema podatka"}
                 </td>
               </tr>
             ))}
             {sortedRegions.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-5 py-8 text-center text-stone-500">
+                <td colSpan={9} className="px-5 py-8 text-center text-slate-500">
                   Nema regija za odabranu drzavu.
                 </td>
               </tr>
