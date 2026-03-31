@@ -15,6 +15,8 @@ import {
   countryAggregates,
   countryDeltas,
   countryReference,
+  itemAggregates,
+  itemDeltas,
   regionAggregates,
   regionDeltas,
   regionReference,
@@ -133,6 +135,7 @@ type SnapshotArchiveManifest = {
     companies: number;
     countryAggregates: number;
     regionAggregates: number;
+    itemAggregates: number;
   };
   files: Array<{
     key: string;
@@ -263,6 +266,7 @@ async function clearAggregates(snapshotId: string) {
 
   await db.delete(regionAggregates).where(eq(regionAggregates.snapshotId, snapshotId));
   await db.delete(countryAggregates).where(eq(countryAggregates.snapshotId, snapshotId));
+  await db.delete(itemAggregates).where(eq(itemAggregates.snapshotId, snapshotId));
 }
 
 async function buildCountryAggregates(snapshotId: string) {
@@ -449,6 +453,52 @@ async function buildRegionAggregates(snapshotId: string) {
   `);
 }
 
+async function buildItemAggregates(snapshotId: string) {
+  const db = getDb();
+
+  await db.execute(sql`
+    insert into item_aggregates (
+      snapshot_id,
+      item_code,
+      company_count,
+      total_workers,
+      total_production
+    )
+    select
+      snapshot_id,
+      item_code,
+      count(*)::int as company_count,
+      coalesce(sum(worker_count), 0)::int as total_workers,
+      coalesce(sum(production), 0)::double precision as total_production
+    from company_snapshot_rows
+    where snapshot_id = ${snapshotId} and item_code is not null
+    group by snapshot_id, item_code
+  `);
+}
+
+async function ensureItemAggregatesAvailable(snapshotId: string) {
+  const db = getDb();
+  const result = await db.execute(sql<{
+    aggregateRows: number;
+    sourceRows: number;
+  }>`
+    select
+      (select count(*)::int from item_aggregates where snapshot_id = ${snapshotId}) as "aggregateRows",
+      (
+        select count(*)::int
+        from company_snapshot_rows
+        where snapshot_id = ${snapshotId} and item_code is not null
+      ) as "sourceRows"
+  `);
+  const row = result.rows[0] as { aggregateRows: number; sourceRows: number } | undefined;
+
+  if (!row || row.aggregateRows > 0 || row.sourceRows === 0) {
+    return;
+  }
+
+  await buildItemAggregates(snapshotId);
+}
+
 async function getCurrentPromotedSnapshot() {
   const db = getDb();
 
@@ -470,6 +520,9 @@ async function buildDeltaPair(input: SnapshotPair) {
   if (!fromSnapshot?.completedAt || !toSnapshot?.completedAt) {
     throw new Error("Both snapshots must be completed before delta generation.");
   }
+
+  await ensureItemAggregatesAvailable(input.fromSnapshotId);
+  await ensureItemAggregatesAvailable(input.toSnapshotId);
 
   await db.transaction(async (tx) => {
     await tx
@@ -496,6 +549,15 @@ async function buildDeltaPair(input: SnapshotPair) {
         and(
           eq(regionDeltas.fromSnapshotId, input.fromSnapshotId),
           eq(regionDeltas.toSnapshotId, input.toSnapshotId),
+        ),
+      );
+
+    await tx
+      .delete(itemDeltas)
+      .where(
+        and(
+          eq(itemDeltas.fromSnapshotId, input.fromSnapshotId),
+          eq(itemDeltas.toSnapshotId, input.toSnapshotId),
         ),
       );
 
@@ -830,6 +892,47 @@ async function buildDeltaPair(input: SnapshotPair) {
         on from_rows.region_id = to_rows.region_id
       left join movement_counts
         on movement_counts.region_id = coalesce(to_rows.region_id, from_rows.region_id)
+    `);
+
+    await tx.execute(sql`
+      insert into item_deltas (
+        from_snapshot_id,
+        to_snapshot_id,
+        item_code,
+        from_company_count,
+        to_company_count,
+        company_count_delta,
+        from_total_workers,
+        to_total_workers,
+        workers_delta,
+        from_total_production,
+        to_total_production,
+        production_delta
+      )
+      select
+        ${input.fromSnapshotId},
+        ${input.toSnapshotId},
+        coalesce(to_rows.item_code, from_rows.item_code),
+        coalesce(from_rows.company_count, 0),
+        coalesce(to_rows.company_count, 0),
+        coalesce(to_rows.company_count, 0) - coalesce(from_rows.company_count, 0),
+        coalesce(from_rows.total_workers, 0),
+        coalesce(to_rows.total_workers, 0),
+        coalesce(to_rows.total_workers, 0) - coalesce(from_rows.total_workers, 0),
+        coalesce(from_rows.total_production, 0),
+        coalesce(to_rows.total_production, 0),
+        coalesce(to_rows.total_production, 0) - coalesce(from_rows.total_production, 0)
+      from (
+        select *
+        from item_aggregates
+        where snapshot_id = ${input.fromSnapshotId}
+      ) as from_rows
+      full outer join (
+        select *
+        from item_aggregates
+        where snapshot_id = ${input.toSnapshotId}
+      ) as to_rows
+        on from_rows.item_code = to_rows.item_code
     `);
 
     await tx.execute(sql`
@@ -1387,6 +1490,7 @@ async function deleteSnapshotHotRows(snapshotId: string) {
       .delete(countryAggregates)
       .where(eq(countryAggregates.snapshotId, snapshotId));
     await tx.delete(regionAggregates).where(eq(regionAggregates.snapshotId, snapshotId));
+    await tx.delete(itemAggregates).where(eq(itemAggregates.snapshotId, snapshotId));
   });
 }
 
@@ -1444,6 +1548,11 @@ async function selectFailedSnapshotForPrune(): Promise<string | null> {
           select 1
           from region_aggregates ra
           where ra.snapshot_id = s.id
+        )
+        or exists (
+          select 1
+          from item_aggregates ia
+          where ia.snapshot_id = s.id
         )
       )
     order by s.created_at asc
@@ -1507,13 +1616,15 @@ async function getSnapshotRowCounts(snapshotId: string) {
     companies: number;
     countryAggregates: number;
     regionAggregates: number;
+    itemAggregates: number;
   }>`
     select
       (select count(*)::int from country_reference where snapshot_id = ${snapshotId}) as "countries",
       (select count(*)::int from region_reference where snapshot_id = ${snapshotId}) as "regions",
       (select count(*)::int from company_snapshot_rows where snapshot_id = ${snapshotId}) as "companies",
       (select count(*)::int from country_aggregates where snapshot_id = ${snapshotId}) as "countryAggregates",
-      (select count(*)::int from region_aggregates where snapshot_id = ${snapshotId}) as "regionAggregates"
+      (select count(*)::int from region_aggregates where snapshot_id = ${snapshotId}) as "regionAggregates",
+      (select count(*)::int from item_aggregates where snapshot_id = ${snapshotId}) as "itemAggregates"
   `);
 
   return (
@@ -1524,6 +1635,7 @@ async function getSnapshotRowCounts(snapshotId: string) {
           companies: number;
           countryAggregates: number;
           regionAggregates: number;
+          itemAggregates: number;
         }
       | undefined) ?? {
       countries: 0,
@@ -1531,6 +1643,7 @@ async function getSnapshotRowCounts(snapshotId: string) {
       companies: 0,
       countryAggregates: 0,
       regionAggregates: 0,
+      itemAggregates: 0,
     }
   );
 }
@@ -1612,6 +1725,18 @@ async function* iterateRegionAggregateRows(snapshotId: string) {
   }
 }
 
+async function* iterateItemAggregateRows(snapshotId: string) {
+  const db = getDb();
+  const rows = await db.query.itemAggregates.findMany({
+    where: eq(itemAggregates.snapshotId, snapshotId),
+    orderBy: [asc(itemAggregates.itemCode)],
+  });
+
+  for (const row of rows) {
+    yield row;
+  }
+}
+
 async function archiveSnapshotToR2(snapshotId: string) {
   const db = getDb();
   const snapshot = await db.query.snapshots.findFirst({
@@ -1683,6 +1808,14 @@ async function archiveSnapshotToR2(snapshotId: string) {
         rows: iterateRegionAggregateRows(snapshotId),
       })),
       rowCount: rowCounts.regionAggregates,
+    });
+
+    files.push({
+      ...(await uploadGzippedNdjson({
+        key: `${objectPrefix}/item-aggregates.ndjson.gz`,
+        rows: iterateItemAggregateRows(snapshotId),
+      })),
+      rowCount: rowCounts.itemAggregates,
     });
 
     const manifest: SnapshotArchiveManifest = {
@@ -1923,6 +2056,7 @@ export async function runSyncPass(source: "manual" | "scheduled" = "manual") {
         await clearAggregates(activeRun.snapshotId);
         await buildCountryAggregates(activeRun.snapshotId);
         await buildRegionAggregates(activeRun.snapshotId);
+        await buildItemAggregates(activeRun.snapshotId);
 
         await updateRunProgress({
           runId: activeRun.runId,

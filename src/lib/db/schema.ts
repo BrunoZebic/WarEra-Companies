@@ -171,6 +171,10 @@ export const companySnapshotRows = pgTable(
       table.snapshotId,
       table.ownerUserId,
     ),
+    index("company_snapshot_rows_snapshot_item_code_idx").on(
+      table.snapshotId,
+      table.itemCode,
+    ),
   ],
 );
 
@@ -235,6 +239,26 @@ export const regionAggregates = pgTable(
       table.countryCode,
     ),
     index("region_aggregates_snapshot_company_count_idx").on(
+      table.snapshotId,
+      table.companyCount,
+    ),
+  ],
+);
+
+export const itemAggregates = pgTable(
+  "item_aggregates",
+  {
+    snapshotId: uuid("snapshot_id")
+      .references(() => snapshots.id, { onDelete: "cascade" })
+      .notNull(),
+    itemCode: text("item_code").notNull(),
+    companyCount: integer("company_count").notNull(),
+    totalWorkers: integer("total_workers").notNull(),
+    totalProduction: doublePrecision("total_production").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.snapshotId, table.itemCode] }),
+    index("item_aggregates_snapshot_company_count_idx").on(
       table.snapshotId,
       table.companyCount,
     ),
@@ -385,6 +409,36 @@ export const regionDeltas = pgTable(
   ],
 );
 
+export const itemDeltas = pgTable(
+  "item_deltas",
+  {
+    fromSnapshotId: uuid("from_snapshot_id")
+      .references(() => snapshots.id, { onDelete: "cascade" })
+      .notNull(),
+    toSnapshotId: uuid("to_snapshot_id")
+      .references(() => snapshots.id, { onDelete: "cascade" })
+      .notNull(),
+    itemCode: text("item_code").notNull(),
+    fromCompanyCount: integer("from_company_count").notNull(),
+    toCompanyCount: integer("to_company_count").notNull(),
+    companyCountDelta: integer("company_count_delta").notNull(),
+    fromTotalWorkers: integer("from_total_workers").notNull(),
+    toTotalWorkers: integer("to_total_workers").notNull(),
+    workersDelta: integer("workers_delta").notNull(),
+    fromTotalProduction: doublePrecision("from_total_production").notNull(),
+    toTotalProduction: doublePrecision("to_total_production").notNull(),
+    productionDelta: doublePrecision("production_delta").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.fromSnapshotId, table.toSnapshotId, table.itemCode] }),
+    index("item_deltas_pair_item_code_idx").on(
+      table.fromSnapshotId,
+      table.toSnapshotId,
+      table.itemCode,
+    ),
+  ],
+);
+
 export const snapshotArchives = pgTable(
   "snapshot_archives",
   {
@@ -413,3 +467,5 @@ export const appState = pgTable("app_state", {
 
 export type CountryAggregateRow = typeof countryAggregates.$inferSelect;
 export type RegionAggregateRow = typeof regionAggregates.$inferSelect;
+export type ItemAggregateRow = typeof itemAggregates.$inferSelect;
+export type ItemDeltaRow = typeof itemDeltas.$inferSelect;

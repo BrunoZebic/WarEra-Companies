@@ -55,6 +55,12 @@ export default async function HomePage() {
                 >
                   Drzave
                 </Link>
+                <Link
+                  href="/products"
+                  className="inline-flex items-center gap-2 rounded-full border border-blue-700/40 px-4 py-2 text-sm font-medium text-blue-300 transition hover:bg-blue-800/30"
+                >
+                  Proizvodi
+                </Link>
               </div>
             </div>
           </div>

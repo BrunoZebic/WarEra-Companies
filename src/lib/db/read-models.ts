@@ -7,10 +7,21 @@ import {
   appState,
   companySnapshotRows,
   countryAggregates,
+  itemAggregates,
+  itemDeltas,
   regionAggregates,
+  snapshotComparisons,
   snapshots,
   syncRuns,
 } from "@/lib/db/schema";
+import {
+  formatSignedDecimal,
+} from "@/lib/formatters";
+import {
+  buildProductOutlook,
+  formatItemCodeLabel,
+  type ProductAnalyticsRow,
+} from "@/lib/products";
 import { CURRENT_SNAPSHOT_STATE_KEY } from "@/lib/sync/constants";
 
 export async function getCurrentSnapshotId() {
@@ -62,6 +73,245 @@ export async function getSnapshotMeta() {
     configured: true as const,
     currentSnapshot,
     latestRun,
+  };
+}
+
+type ProductMetricRow = {
+  itemCode: string;
+  companyCount: number;
+  totalWorkers: number;
+  totalProduction: number;
+};
+
+type ProductsOutlookState =
+  | {
+      status: "available";
+      message: string;
+      pairMaps: Array<
+        Map<
+          string,
+          {
+            companyCountDelta: number;
+            workersDelta: number;
+            productionDelta: number;
+          }
+        >
+      >;
+    }
+  | {
+      status: "insufficient_history";
+      message: string;
+    };
+
+function isMissingRelationError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const cause = error.cause as { code?: string; message?: string } | undefined;
+
+  return cause?.code === "42P01" || /relation .* does not exist/i.test(error.message);
+}
+
+async function getCurrentProductMetrics(snapshotId: string) {
+  const db = getDb();
+  try {
+    const aggregateRows = await db.query.itemAggregates.findMany({
+      where: eq(itemAggregates.snapshotId, snapshotId),
+      orderBy: [desc(itemAggregates.companyCount), asc(itemAggregates.itemCode)],
+    });
+
+    if (aggregateRows.length > 0) {
+      return aggregateRows.map((row) => ({
+        itemCode: row.itemCode,
+        companyCount: row.companyCount,
+        totalWorkers: row.totalWorkers,
+        totalProduction: row.totalProduction,
+      })) satisfies ProductMetricRow[];
+    }
+  } catch (error) {
+    if (!isMissingRelationError(error)) {
+      throw error;
+    }
+  }
+
+  const result = await db.execute(sql<ProductMetricRow>`
+    select
+      item_code as "itemCode",
+      count(*)::int as "companyCount",
+      coalesce(sum(worker_count), 0)::int as "totalWorkers",
+      coalesce(sum(production), 0)::double precision as "totalProduction"
+    from company_snapshot_rows
+    where snapshot_id = ${snapshotId} and item_code is not null
+    group by item_code
+    order by count(*) desc, item_code asc
+  `);
+
+  return result.rows as ProductMetricRow[];
+}
+
+async function getUncodedCompaniesCount(snapshotId: string) {
+  const db = getDb();
+  const result = await db.execute(sql<{ uncodedCompaniesCount: number }>`
+    select
+      count(*)::int as "uncodedCompaniesCount"
+    from company_snapshot_rows
+    where snapshot_id = ${snapshotId} and item_code is null
+  `);
+
+  return (result.rows[0] as { uncodedCompaniesCount: number } | undefined)
+    ?.uncodedCompaniesCount ?? 0;
+}
+
+async function getLatestItemDeltaMap(snapshotId: string) {
+  const db = getDb();
+  try {
+    const latestComparison = await db.query.snapshotComparisons.findFirst({
+      where: eq(snapshotComparisons.toSnapshotId, snapshotId),
+      orderBy: [
+        desc(snapshotComparisons.toSnapshotCompletedAt),
+        desc(snapshotComparisons.fromSnapshotCompletedAt),
+      ],
+    });
+
+    if (!latestComparison) {
+      return null;
+    }
+
+    const rows = await db.query.itemDeltas.findMany({
+      where: and(
+        eq(itemDeltas.fromSnapshotId, latestComparison.fromSnapshotId),
+        eq(itemDeltas.toSnapshotId, latestComparison.toSnapshotId),
+      ),
+    });
+
+    if (rows.length === 0) {
+      return null;
+    }
+
+    return new Map(rows.map((row) => [row.itemCode, row]));
+  } catch (error) {
+    if (!isMissingRelationError(error)) {
+      throw error;
+    }
+
+    return null;
+  }
+}
+
+async function getProductsOutlookState(input: {
+  currentSnapshotId: string;
+  currentSnapshotCompletedAt: Date | null;
+}): Promise<ProductsOutlookState> {
+  if (!input.currentSnapshotCompletedAt) {
+    return {
+      status: "insufficient_history",
+      message: "Premalo povijesti za outlook.",
+    };
+  }
+
+  const db = getDb();
+  const snapshotsResult = await db.execute(sql<{
+    id: string;
+    completedAt: Date;
+  }>`
+    select
+      id,
+      completed_at as "completedAt"
+    from snapshots
+    where
+      status in ('promoted', 'archived')
+      and completed_at is not null
+      and completed_at <= ${input.currentSnapshotCompletedAt}
+    order by completed_at desc
+    limit 4
+  `);
+  const chain = [
+    ...(snapshotsResult.rows as Array<{
+      id: string;
+      completedAt: Date;
+    }>),
+  ].reverse();
+
+  if (chain.length < 4 || chain[chain.length - 1]?.id !== input.currentSnapshotId) {
+    return {
+      status: "insufficient_history",
+      message: "Premalo povijesti za outlook.",
+    };
+  }
+
+  const pairs = chain.slice(0, -1).map((snapshot, index) => ({
+    fromSnapshotId: snapshot.id,
+    toSnapshotId: chain[index + 1]!.id,
+  }));
+
+  const comparisons = await Promise.all(
+    pairs.map((pair) =>
+      db.query.snapshotComparisons.findFirst({
+        where: and(
+          eq(snapshotComparisons.fromSnapshotId, pair.fromSnapshotId),
+          eq(snapshotComparisons.toSnapshotId, pair.toSnapshotId),
+        ),
+      }),
+    ),
+  );
+
+  if (comparisons.some((comparison) => !comparison)) {
+    return {
+      status: "insufficient_history",
+      message: "Premalo povijesti za outlook.",
+    };
+  }
+
+  const deltaRows = await Promise.all(
+    pairs.map(async (pair) => {
+      try {
+        return await db.query.itemDeltas.findMany({
+          where: and(
+            eq(itemDeltas.fromSnapshotId, pair.fromSnapshotId),
+            eq(itemDeltas.toSnapshotId, pair.toSnapshotId),
+          ),
+        });
+      } catch (error) {
+        if (!isMissingRelationError(error)) {
+          throw error;
+        }
+
+        return [];
+      }
+    }),
+  );
+
+  if (deltaRows.some((rows) => rows.length === 0)) {
+    return {
+      status: "insufficient_history",
+      message: "Premalo povijesti za outlook.",
+    };
+  }
+
+  return {
+    status: "available",
+    message: "Outlook koristi zadnja 3 uzastopna para snapshota.",
+    pairMaps: deltaRows.map((rows) => {
+      const byItemCode = new Map<
+        string,
+        {
+          companyCountDelta: number;
+          workersDelta: number;
+          productionDelta: number;
+        }
+      >();
+
+      for (const row of rows) {
+        byItemCode.set(row.itemCode, {
+          companyCountDelta: row.companyCountDelta,
+          workersDelta: row.workersDelta,
+          productionDelta: row.productionDelta,
+        });
+      }
+
+      return byItemCode;
+    }),
   };
 }
 
@@ -268,6 +518,77 @@ export async function getRegionDetailData(regionCode: string) {
     ...snapshotMeta,
     region,
     companies,
+  };
+}
+
+export async function getProductsPageData() {
+  const snapshotMeta = await getSnapshotMeta();
+
+  if (!snapshotMeta.configured || !snapshotMeta.currentSnapshot) {
+    return {
+      ...snapshotMeta,
+      products: [] as ProductAnalyticsRow[],
+      uncodedCompaniesCount: 0,
+      outlookState: {
+        status: "insufficient_history" as const,
+        message: "Premalo povijesti za outlook.",
+      },
+    };
+  }
+
+  const snapshotId = snapshotMeta.currentSnapshot.id;
+  const [productMetrics, uncodedCompaniesCount, latestDeltaMap, outlookState] =
+    await Promise.all([
+      getCurrentProductMetrics(snapshotId),
+      getUncodedCompaniesCount(snapshotId),
+      getLatestItemDeltaMap(snapshotId),
+      getProductsOutlookState({
+        currentSnapshotId: snapshotMeta.currentSnapshot.id,
+        currentSnapshotCompletedAt: snapshotMeta.currentSnapshot.completedAt ?? null,
+      }),
+    ]);
+
+  const products = productMetrics.map((product) => {
+    const latestDelta = latestDeltaMap?.get(product.itemCode) ?? null;
+    const outlook =
+      outlookState.status === "available"
+        ? buildProductOutlook(
+            outlookState.pairMaps.map(
+              (pairMap) =>
+                pairMap.get(product.itemCode) ?? {
+                  companyCountDelta: 0,
+                  workersDelta: 0,
+                  productionDelta: 0,
+                },
+            ),
+          )
+        : null;
+
+    return {
+      itemCode: product.itemCode,
+      displayLabel: formatItemCodeLabel(product.itemCode),
+      companyCount: product.companyCount,
+      totalWorkers: product.totalWorkers,
+      totalProduction: product.totalProduction,
+      companyCountDelta: latestDelta?.companyCountDelta ?? null,
+      workersDelta: latestDelta?.workersDelta ?? null,
+      productionDelta: latestDelta?.productionDelta ?? null,
+      outlookLabel: outlook?.label ?? null,
+      outlookConfidence: outlook?.confidence ?? null,
+      outlookSummary: outlook
+        ? `Prosjek 3 para: ${formatSignedDecimal(outlook.averageCompanyCountDelta)} firmi, ${formatSignedDecimal(outlook.averageWorkersDelta)} workersa, ${formatSignedDecimal(outlook.averageProductionDelta)} productiona`
+        : null,
+    } satisfies ProductAnalyticsRow;
+  });
+
+  return {
+    ...snapshotMeta,
+    products,
+    uncodedCompaniesCount,
+    outlookState: {
+      status: outlookState.status,
+      message: outlookState.message,
+    },
   };
 }
 
