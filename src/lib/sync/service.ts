@@ -38,6 +38,12 @@ import {
   SYNC_STALE_AFTER_MS,
 } from "@/lib/sync/constants";
 import {
+  advanceCompanySyncCursor,
+  createInitialCompanySyncCursorState,
+  parseCompanySyncCursor,
+  serializeCompanySyncCursor,
+} from "@/lib/sync/company-sync";
+import {
   normalizeCompanySnapshotRow,
   normalizeCountries,
   normalizeOwnerSnapshot,
@@ -248,7 +254,7 @@ async function bulkInsertCompanies(rows: CompanySnapshotRowInput[]) {
   const db = getDb();
 
   for (const batch of chunk(rows, 250)) {
-    await db.insert(companySnapshotRows).values(batch);
+    await db.insert(companySnapshotRows).values(batch).onConflictDoNothing();
   }
 }
 
@@ -1059,13 +1065,16 @@ async function loadReferenceMaps(snapshotId: string) {
   const [countryRows, regionRows] = await Promise.all([
     db.query.countryReference.findMany({
       where: eq(countryReference.snapshotId, snapshotId),
+      orderBy: [asc(countryReference.countryCode)],
     }),
     db.query.regionReference.findMany({
       where: eq(regionReference.snapshotId, snapshotId),
+      orderBy: [asc(regionReference.regionCode)],
     }),
   ]);
 
   return {
+    countries: countryRows,
     countryById: new Map<string, CountryReferenceRowInput>(
       countryRows.map((country) => [country.countryId, country]),
     ),
@@ -1165,10 +1174,91 @@ async function fetchMissingOwnersFromApi(input: {
   return users.length;
 }
 
+async function resetCompanySyncPhase(run: ActiveRun) {
+  const db = getDb();
+
+  await db.delete(companySnapshotRows).where(eq(companySnapshotRows.snapshotId, run.snapshotId));
+  await updateRunProgress({
+    runId: run.runId,
+    phase: "sync_company_pages",
+    phaseCursor: null,
+    companyPagesProcessed: 0,
+    companyRowsWritten: 0,
+    uniqueUsersFetched: 0,
+  });
+
+  return {
+    ...run,
+    phaseCursor: null,
+    companyPagesProcessed: 0,
+    companyRowsWritten: 0,
+    uniqueUsersFetched: 0,
+  } satisfies ActiveRun;
+}
+
+async function collectCompanyIdsForUsers(userIds: string[]) {
+  if (userIds.length === 0) {
+    return [];
+  }
+
+  const client = getWareraClient();
+  const companyIds = new Set<string>();
+  let pendingUsers = userIds.map((userId) => ({
+    userId,
+    cursor: null as string | null,
+  }));
+
+  // The global company listing omits a large share of companies, so we fan out
+  // through country user pages and collect company ids per owner instead.
+  while (pendingUsers.length > 0) {
+    const pages = await Promise.all(
+      pendingUsers.map(({ userId, cursor }) =>
+        cursor
+          ? client.company.getCompanies({
+              userId,
+              perPage: 100,
+              cursor,
+            })
+          : client.company.getCompanies({
+              userId,
+              perPage: 100,
+            }),
+      ),
+    );
+
+    const nextPendingUsers: typeof pendingUsers = [];
+
+    for (const [index, page] of pages.entries()) {
+      page.items.forEach((companyId) => companyIds.add(companyId));
+
+      if (page.nextCursor) {
+        nextPendingUsers.push({
+          userId: pendingUsers[index]!.userId,
+          cursor: page.nextCursor,
+        });
+      }
+    }
+
+    pendingUsers = nextPendingUsers;
+  }
+
+  return Array.from(companyIds);
+}
+
 async function processCompanyPagesPhase(run: ActiveRun) {
-  if (run.phaseCursor === "") {
+  let activeRun = run;
+
+  if (activeRun.phaseCursor && activeRun.phaseCursor !== "") {
+    try {
+      parseCompanySyncCursor(activeRun.phaseCursor);
+    } catch {
+      activeRun = await resetCompanySyncPhase(activeRun);
+    }
+  }
+
+  if (activeRun.phaseCursor === "") {
     return {
-      ...run,
+      ...activeRun,
       phaseCursor: "",
       passPagesProcessed: 0,
       hasMorePages: false,
@@ -1176,50 +1266,64 @@ async function processCompanyPagesPhase(run: ActiveRun) {
   }
 
   const client = getWareraClient();
-  const references = await ensureReferenceData(run.snapshotId);
+  const references = await ensureReferenceData(activeRun.snapshotId);
   const ownerCache = new Map<string, OwnerSnapshotInput>();
 
-  let companyPagesProcessed = run.companyPagesProcessed;
-  let companyRowsWritten = run.companyRowsWritten;
-  let uniqueUsersFetched = run.uniqueUsersFetched;
-  let lastCursor = run.phaseCursor;
+  let companyPagesProcessed = activeRun.companyPagesProcessed;
+  let companyRowsWritten = activeRun.companyRowsWritten;
+  let uniqueUsersFetched = activeRun.uniqueUsersFetched;
   let passPagesProcessed = 0;
+  let syncCursor = activeRun.phaseCursor
+    ? parseCompanySyncCursor(activeRun.phaseCursor)
+    : createInitialCompanySyncCursorState();
 
-  const pageIterator = run.phaseCursor
-    ? client.company.getCompanies({
-        perPage: 100,
-        cursor: run.phaseCursor,
-        autoPaginate: true,
-        maxPages: SYNC_MAX_PAGES_PER_PASS,
-      })
-    : client.company.getCompanies({
-        perPage: 100,
-        autoPaginate: true,
-        maxPages: SYNC_MAX_PAGES_PER_PASS,
-      });
+  while (
+    passPagesProcessed < SYNC_MAX_PAGES_PER_PASS &&
+    syncCursor.countryIndex < references.countries.length
+  ) {
+    const country = references.countries[syncCursor.countryIndex];
 
-  for await (const page of pageIterator) {
+    if (!country) {
+      break;
+    }
+
+    const userPage = syncCursor.userCursor
+      ? await client.user.getUsersByCountry({
+          countryId: country.countryId,
+          limit: 100,
+          cursor: syncCursor.userCursor,
+        })
+      : await client.user.getUsersByCountry({
+          countryId: country.countryId,
+          limit: 100,
+        });
+
     passPagesProcessed += 1;
     companyPagesProcessed += 1;
-    lastCursor = page.cursor;
+    syncCursor = advanceCompanySyncCursor(syncCursor, userPage.nextCursor);
 
+    const companyIds = await collectCompanyIdsForUsers(
+      userPage.items.map((user) => user._id),
+    );
     const companies = await Promise.all(
-      page.items.map((companyId) => client.company.getById({ companyId })),
+      companyIds.map((companyId) => client.company.getById({ companyId })),
     );
 
     const pageOwnerIds = Array.from(new Set(companies.map((company) => company.user)));
-    await loadOwnersFromSnapshot({
-      snapshotId: run.snapshotId,
-      userIds: pageOwnerIds,
-      ownerCache,
-    });
+    if (pageOwnerIds.length > 0) {
+      await loadOwnersFromSnapshot({
+        snapshotId: activeRun.snapshotId,
+        userIds: pageOwnerIds,
+        ownerCache,
+      });
 
-    const missingOwnerIds = pageOwnerIds.filter((userId) => !ownerCache.has(userId));
-    uniqueUsersFetched += await fetchMissingOwnersFromApi({
-      userIds: missingOwnerIds,
-      countryById: references.countryById,
-      ownerCache,
-    });
+      const missingOwnerIds = pageOwnerIds.filter((userId) => !ownerCache.has(userId));
+      uniqueUsersFetched += await fetchMissingOwnersFromApi({
+        userIds: missingOwnerIds,
+        countryById: references.countryById,
+        ownerCache,
+      });
+    }
 
     const companyRows = companies.map((company) => {
       const owner = ownerCache.get(company.user);
@@ -1229,7 +1333,7 @@ async function processCompanyPagesPhase(run: ActiveRun) {
       }
 
       return normalizeCompanySnapshotRow({
-        snapshotId: run.snapshotId,
+        snapshotId: activeRun.snapshotId,
         company,
         regionById: references.regionById,
         owner,
@@ -1240,25 +1344,33 @@ async function processCompanyPagesPhase(run: ActiveRun) {
     companyRowsWritten += companyRows.length;
 
     await updateRunProgress({
-      runId: run.runId,
+      runId: activeRun.runId,
       phase: "sync_company_pages",
-      phaseCursor: lastCursor,
+      phaseCursor:
+        syncCursor.countryIndex >= references.countries.length
+          ? ""
+          : serializeCompanySyncCursor(syncCursor),
       companyPagesProcessed,
       companyRowsWritten,
       uniqueUsersFetched,
     });
   }
 
+  const lastCursor =
+    syncCursor.countryIndex >= references.countries.length
+      ? ""
+      : serializeCompanySyncCursor(syncCursor);
+
   return {
-    runId: run.runId,
-    snapshotId: run.snapshotId,
+    runId: activeRun.runId,
+    snapshotId: activeRun.snapshotId,
     phase: "sync_company_pages" as const,
     phaseCursor: lastCursor,
     companyPagesProcessed,
     companyRowsWritten,
     uniqueUsersFetched,
     passPagesProcessed,
-    hasMorePages: lastCursor !== "",
+    hasMorePages: syncCursor.countryIndex < references.countries.length,
   };
 }
 
