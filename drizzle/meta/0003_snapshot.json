@@ -1,0 +1,2224 @@
+{
+  "id": "a10787ac-b358-4c4f-8514-17a05f17a988",
+  "prevId": "739774db-b14c-43f9-bd2b-54dd1a0c8347",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.app_state": {
+      "name": "app_state",
+      "schema": "",
+      "columns": {
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.company_deltas": {
+      "name": "company_deltas",
+      "schema": "",
+      "columns": {
+        "from_snapshot_id": {
+          "name": "from_snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "to_snapshot_id": {
+          "name": "to_snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "company_id": {
+          "name": "company_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "exists_in_from": {
+          "name": "exists_in_from",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "exists_in_to": {
+          "name": "exists_in_to",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "from_region_id": {
+          "name": "from_region_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "to_region_id": {
+          "name": "to_region_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "from_country_id": {
+          "name": "from_country_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "to_country_id": {
+          "name": "to_country_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "from_owner_country_id": {
+          "name": "from_owner_country_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "to_owner_country_id": {
+          "name": "to_owner_country_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "region_changed": {
+          "name": "region_changed",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country_changed": {
+          "name": "country_changed",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "owner_country_changed": {
+          "name": "owner_country_changed",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "worker_count_delta": {
+          "name": "worker_count_delta",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "estimated_value_delta": {
+          "name": "estimated_value_delta",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "production_delta": {
+          "name": "production_delta",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "company_deltas_company_to_snapshot_idx": {
+          "name": "company_deltas_company_to_snapshot_idx",
+          "columns": [
+            {
+              "expression": "company_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "to_snapshot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "company_deltas_from_snapshot_id_snapshots_id_fk": {
+          "name": "company_deltas_from_snapshot_id_snapshots_id_fk",
+          "tableFrom": "company_deltas",
+          "tableTo": "snapshots",
+          "columnsFrom": [
+            "from_snapshot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "company_deltas_to_snapshot_id_snapshots_id_fk": {
+          "name": "company_deltas_to_snapshot_id_snapshots_id_fk",
+          "tableFrom": "company_deltas",
+          "tableTo": "snapshots",
+          "columnsFrom": [
+            "to_snapshot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "company_deltas_from_snapshot_id_to_snapshot_id_company_id_pk": {
+          "name": "company_deltas_from_snapshot_id_to_snapshot_id_company_id_pk",
+          "columns": [
+            "from_snapshot_id",
+            "to_snapshot_id",
+            "company_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.company_snapshot_rows": {
+      "name": "company_snapshot_rows",
+      "schema": "",
+      "columns": {
+        "snapshot_id": {
+          "name": "snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "company_id": {
+          "name": "company_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "company_name": {
+          "name": "company_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "item_code": {
+          "name": "item_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "region_id": {
+          "name": "region_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "region_code": {
+          "name": "region_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "region_name": {
+          "name": "region_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country_id": {
+          "name": "country_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country_code": {
+          "name": "country_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country_name": {
+          "name": "country_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "owner_user_id": {
+          "name": "owner_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "owner_username": {
+          "name": "owner_username",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "owner_country_id": {
+          "name": "owner_country_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "owner_country_code": {
+          "name": "owner_country_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "owner_country_name": {
+          "name": "owner_country_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "worker_count": {
+          "name": "worker_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "estimated_value": {
+          "name": "estimated_value",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "production": {
+          "name": "production",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "is_full": {
+          "name": "is_full",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "warera_updated_at": {
+          "name": "warera_updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "company_snapshot_rows_snapshot_region_code_idx": {
+          "name": "company_snapshot_rows_snapshot_region_code_idx",
+          "columns": [
+            {
+              "expression": "snapshot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "region_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "company_snapshot_rows_snapshot_country_code_idx": {
+          "name": "company_snapshot_rows_snapshot_country_code_idx",
+          "columns": [
+            {
+              "expression": "snapshot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "country_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "company_snapshot_rows_snapshot_owner_country_code_idx": {
+          "name": "company_snapshot_rows_snapshot_owner_country_code_idx",
+          "columns": [
+            {
+              "expression": "snapshot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "owner_country_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "company_snapshot_rows_snapshot_owner_user_idx": {
+          "name": "company_snapshot_rows_snapshot_owner_user_idx",
+          "columns": [
+            {
+              "expression": "snapshot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "owner_user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "company_snapshot_rows_snapshot_item_code_idx": {
+          "name": "company_snapshot_rows_snapshot_item_code_idx",
+          "columns": [
+            {
+              "expression": "snapshot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "item_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "company_snapshot_rows_snapshot_id_snapshots_id_fk": {
+          "name": "company_snapshot_rows_snapshot_id_snapshots_id_fk",
+          "tableFrom": "company_snapshot_rows",
+          "tableTo": "snapshots",
+          "columnsFrom": [
+            "snapshot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "company_snapshot_rows_snapshot_id_company_id_pk": {
+          "name": "company_snapshot_rows_snapshot_id_company_id_pk",
+          "columns": [
+            "snapshot_id",
+            "company_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.country_aggregates": {
+      "name": "country_aggregates",
+      "schema": "",
+      "columns": {
+        "snapshot_id": {
+          "name": "snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country_id": {
+          "name": "country_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country_code": {
+          "name": "country_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country_name": {
+          "name": "country_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "income_tax": {
+          "name": "income_tax",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "market_tax": {
+          "name": "market_tax",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "self_work_tax": {
+          "name": "self_work_tax",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "company_count": {
+          "name": "company_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "regions_with_companies": {
+          "name": "regions_with_companies",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "domestic_owned_count": {
+          "name": "domestic_owned_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "foreign_owned_count": {
+          "name": "foreign_owned_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "unique_owner_countries": {
+          "name": "unique_owner_countries",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "top_owner_country_code": {
+          "name": "top_owner_country_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "top_owner_country_name": {
+          "name": "top_owner_country_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "top_owner_country_company_count": {
+          "name": "top_owner_country_company_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "country_aggregates_snapshot_code_idx": {
+          "name": "country_aggregates_snapshot_code_idx",
+          "columns": [
+            {
+              "expression": "snapshot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "country_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "country_aggregates_snapshot_company_count_idx": {
+          "name": "country_aggregates_snapshot_company_count_idx",
+          "columns": [
+            {
+              "expression": "snapshot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "company_count",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "country_aggregates_snapshot_id_snapshots_id_fk": {
+          "name": "country_aggregates_snapshot_id_snapshots_id_fk",
+          "tableFrom": "country_aggregates",
+          "tableTo": "snapshots",
+          "columnsFrom": [
+            "snapshot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "country_aggregates_snapshot_id_country_id_pk": {
+          "name": "country_aggregates_snapshot_id_country_id_pk",
+          "columns": [
+            "snapshot_id",
+            "country_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.country_deltas": {
+      "name": "country_deltas",
+      "schema": "",
+      "columns": {
+        "from_snapshot_id": {
+          "name": "from_snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "to_snapshot_id": {
+          "name": "to_snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country_id": {
+          "name": "country_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country_code": {
+          "name": "country_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country_name": {
+          "name": "country_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "from_company_count": {
+          "name": "from_company_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "to_company_count": {
+          "name": "to_company_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "company_count_delta": {
+          "name": "company_count_delta",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "regions_with_companies_delta": {
+          "name": "regions_with_companies_delta",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "domestic_owned_delta": {
+          "name": "domestic_owned_delta",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "foreign_owned_delta": {
+          "name": "foreign_owned_delta",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "unique_owner_countries_delta": {
+          "name": "unique_owner_countries_delta",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "gained_companies_count": {
+          "name": "gained_companies_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "lost_companies_count": {
+          "name": "lost_companies_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "from_income_tax": {
+          "name": "from_income_tax",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "to_income_tax": {
+          "name": "to_income_tax",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "income_tax_delta": {
+          "name": "income_tax_delta",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "from_market_tax": {
+          "name": "from_market_tax",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "to_market_tax": {
+          "name": "to_market_tax",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "market_tax_delta": {
+          "name": "market_tax_delta",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "from_self_work_tax": {
+          "name": "from_self_work_tax",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "to_self_work_tax": {
+          "name": "to_self_work_tax",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "self_work_tax_delta": {
+          "name": "self_work_tax_delta",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "country_deltas_pair_country_code_idx": {
+          "name": "country_deltas_pair_country_code_idx",
+          "columns": [
+            {
+              "expression": "from_snapshot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "to_snapshot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "country_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "country_deltas_from_snapshot_id_snapshots_id_fk": {
+          "name": "country_deltas_from_snapshot_id_snapshots_id_fk",
+          "tableFrom": "country_deltas",
+          "tableTo": "snapshots",
+          "columnsFrom": [
+            "from_snapshot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "country_deltas_to_snapshot_id_snapshots_id_fk": {
+          "name": "country_deltas_to_snapshot_id_snapshots_id_fk",
+          "tableFrom": "country_deltas",
+          "tableTo": "snapshots",
+          "columnsFrom": [
+            "to_snapshot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "country_deltas_from_snapshot_id_to_snapshot_id_country_id_pk": {
+          "name": "country_deltas_from_snapshot_id_to_snapshot_id_country_id_pk",
+          "columns": [
+            "from_snapshot_id",
+            "to_snapshot_id",
+            "country_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.country_reference": {
+      "name": "country_reference",
+      "schema": "",
+      "columns": {
+        "snapshot_id": {
+          "name": "snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country_id": {
+          "name": "country_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country_code": {
+          "name": "country_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country_name": {
+          "name": "country_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "income_tax": {
+          "name": "income_tax",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "market_tax": {
+          "name": "market_tax",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "self_work_tax": {
+          "name": "self_work_tax",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "country_reference_snapshot_code_idx": {
+          "name": "country_reference_snapshot_code_idx",
+          "columns": [
+            {
+              "expression": "snapshot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "country_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "country_reference_snapshot_id_snapshots_id_fk": {
+          "name": "country_reference_snapshot_id_snapshots_id_fk",
+          "tableFrom": "country_reference",
+          "tableTo": "snapshots",
+          "columnsFrom": [
+            "snapshot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "country_reference_snapshot_id_country_id_pk": {
+          "name": "country_reference_snapshot_id_country_id_pk",
+          "columns": [
+            "snapshot_id",
+            "country_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.item_aggregates": {
+      "name": "item_aggregates",
+      "schema": "",
+      "columns": {
+        "snapshot_id": {
+          "name": "snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "item_code": {
+          "name": "item_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "company_count": {
+          "name": "company_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "total_workers": {
+          "name": "total_workers",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "total_production": {
+          "name": "total_production",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "item_aggregates_snapshot_company_count_idx": {
+          "name": "item_aggregates_snapshot_company_count_idx",
+          "columns": [
+            {
+              "expression": "snapshot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "company_count",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "item_aggregates_snapshot_id_snapshots_id_fk": {
+          "name": "item_aggregates_snapshot_id_snapshots_id_fk",
+          "tableFrom": "item_aggregates",
+          "tableTo": "snapshots",
+          "columnsFrom": [
+            "snapshot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "item_aggregates_snapshot_id_item_code_pk": {
+          "name": "item_aggregates_snapshot_id_item_code_pk",
+          "columns": [
+            "snapshot_id",
+            "item_code"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.item_deltas": {
+      "name": "item_deltas",
+      "schema": "",
+      "columns": {
+        "from_snapshot_id": {
+          "name": "from_snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "to_snapshot_id": {
+          "name": "to_snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "item_code": {
+          "name": "item_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "from_company_count": {
+          "name": "from_company_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "to_company_count": {
+          "name": "to_company_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "company_count_delta": {
+          "name": "company_count_delta",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "from_total_workers": {
+          "name": "from_total_workers",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "to_total_workers": {
+          "name": "to_total_workers",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "workers_delta": {
+          "name": "workers_delta",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "from_total_production": {
+          "name": "from_total_production",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "to_total_production": {
+          "name": "to_total_production",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "production_delta": {
+          "name": "production_delta",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "item_deltas_pair_item_code_idx": {
+          "name": "item_deltas_pair_item_code_idx",
+          "columns": [
+            {
+              "expression": "from_snapshot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "to_snapshot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "item_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "item_deltas_from_snapshot_id_snapshots_id_fk": {
+          "name": "item_deltas_from_snapshot_id_snapshots_id_fk",
+          "tableFrom": "item_deltas",
+          "tableTo": "snapshots",
+          "columnsFrom": [
+            "from_snapshot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "item_deltas_to_snapshot_id_snapshots_id_fk": {
+          "name": "item_deltas_to_snapshot_id_snapshots_id_fk",
+          "tableFrom": "item_deltas",
+          "tableTo": "snapshots",
+          "columnsFrom": [
+            "to_snapshot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "item_deltas_from_snapshot_id_to_snapshot_id_item_code_pk": {
+          "name": "item_deltas_from_snapshot_id_to_snapshot_id_item_code_pk",
+          "columns": [
+            "from_snapshot_id",
+            "to_snapshot_id",
+            "item_code"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.region_aggregates": {
+      "name": "region_aggregates",
+      "schema": "",
+      "columns": {
+        "snapshot_id": {
+          "name": "snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "region_id": {
+          "name": "region_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "region_code": {
+          "name": "region_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "region_name": {
+          "name": "region_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country_id": {
+          "name": "country_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country_code": {
+          "name": "country_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country_name": {
+          "name": "country_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "income_tax": {
+          "name": "income_tax",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "development": {
+          "name": "development",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "company_count": {
+          "name": "company_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "domestic_owned_count": {
+          "name": "domestic_owned_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "foreign_owned_count": {
+          "name": "foreign_owned_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "unique_owner_countries": {
+          "name": "unique_owner_countries",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "top_owner_country_code": {
+          "name": "top_owner_country_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "top_owner_country_name": {
+          "name": "top_owner_country_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "top_owner_country_company_count": {
+          "name": "top_owner_country_company_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "region_aggregates_snapshot_code_idx": {
+          "name": "region_aggregates_snapshot_code_idx",
+          "columns": [
+            {
+              "expression": "snapshot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "region_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "region_aggregates_snapshot_country_code_idx": {
+          "name": "region_aggregates_snapshot_country_code_idx",
+          "columns": [
+            {
+              "expression": "snapshot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "country_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "region_aggregates_snapshot_company_count_idx": {
+          "name": "region_aggregates_snapshot_company_count_idx",
+          "columns": [
+            {
+              "expression": "snapshot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "company_count",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "region_aggregates_snapshot_id_snapshots_id_fk": {
+          "name": "region_aggregates_snapshot_id_snapshots_id_fk",
+          "tableFrom": "region_aggregates",
+          "tableTo": "snapshots",
+          "columnsFrom": [
+            "snapshot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "region_aggregates_snapshot_id_region_id_pk": {
+          "name": "region_aggregates_snapshot_id_region_id_pk",
+          "columns": [
+            "snapshot_id",
+            "region_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.region_deltas": {
+      "name": "region_deltas",
+      "schema": "",
+      "columns": {
+        "from_snapshot_id": {
+          "name": "from_snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "to_snapshot_id": {
+          "name": "to_snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "region_id": {
+          "name": "region_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "region_code": {
+          "name": "region_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "region_name": {
+          "name": "region_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country_id": {
+          "name": "country_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country_code": {
+          "name": "country_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country_name": {
+          "name": "country_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "from_company_count": {
+          "name": "from_company_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "to_company_count": {
+          "name": "to_company_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "company_count_delta": {
+          "name": "company_count_delta",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "domestic_owned_delta": {
+          "name": "domestic_owned_delta",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "foreign_owned_delta": {
+          "name": "foreign_owned_delta",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "unique_owner_countries_delta": {
+          "name": "unique_owner_countries_delta",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "gained_companies_count": {
+          "name": "gained_companies_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "lost_companies_count": {
+          "name": "lost_companies_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "net_flow": {
+          "name": "net_flow",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "region_deltas_pair_region_code_idx": {
+          "name": "region_deltas_pair_region_code_idx",
+          "columns": [
+            {
+              "expression": "from_snapshot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "to_snapshot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "region_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "region_deltas_from_snapshot_id_snapshots_id_fk": {
+          "name": "region_deltas_from_snapshot_id_snapshots_id_fk",
+          "tableFrom": "region_deltas",
+          "tableTo": "snapshots",
+          "columnsFrom": [
+            "from_snapshot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "region_deltas_to_snapshot_id_snapshots_id_fk": {
+          "name": "region_deltas_to_snapshot_id_snapshots_id_fk",
+          "tableFrom": "region_deltas",
+          "tableTo": "snapshots",
+          "columnsFrom": [
+            "to_snapshot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "region_deltas_from_snapshot_id_to_snapshot_id_region_id_pk": {
+          "name": "region_deltas_from_snapshot_id_to_snapshot_id_region_id_pk",
+          "columns": [
+            "from_snapshot_id",
+            "to_snapshot_id",
+            "region_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.region_reference": {
+      "name": "region_reference",
+      "schema": "",
+      "columns": {
+        "snapshot_id": {
+          "name": "snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "region_id": {
+          "name": "region_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "region_code": {
+          "name": "region_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "region_name": {
+          "name": "region_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country_id": {
+          "name": "country_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country_code": {
+          "name": "country_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country_name": {
+          "name": "country_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "development": {
+          "name": "development",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "main_city": {
+          "name": "main_city",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "latitude": {
+          "name": "latitude",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "longitude": {
+          "name": "longitude",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "region_reference_snapshot_code_idx": {
+          "name": "region_reference_snapshot_code_idx",
+          "columns": [
+            {
+              "expression": "snapshot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "region_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "region_reference_snapshot_country_code_idx": {
+          "name": "region_reference_snapshot_country_code_idx",
+          "columns": [
+            {
+              "expression": "snapshot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "country_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "region_reference_snapshot_id_snapshots_id_fk": {
+          "name": "region_reference_snapshot_id_snapshots_id_fk",
+          "tableFrom": "region_reference",
+          "tableTo": "snapshots",
+          "columnsFrom": [
+            "snapshot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "region_reference_snapshot_id_region_id_pk": {
+          "name": "region_reference_snapshot_id_region_id_pk",
+          "columns": [
+            "snapshot_id",
+            "region_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.snapshot_archives": {
+      "name": "snapshot_archives",
+      "schema": "",
+      "columns": {
+        "snapshot_id": {
+          "name": "snapshot_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "archive_status": {
+          "name": "archive_status",
+          "type": "snapshot_archive_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "bucket_name": {
+          "name": "bucket_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "object_prefix": {
+          "name": "object_prefix",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "manifest_key": {
+          "name": "manifest_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "manifest_etag": {
+          "name": "manifest_etag",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "total_bytes": {
+          "name": "total_bytes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "uploaded_at": {
+          "name": "uploaded_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "db_pruned_at": {
+          "name": "db_pruned_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_error": {
+          "name": "last_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "snapshot_archives_status_idx": {
+          "name": "snapshot_archives_status_idx",
+          "columns": [
+            {
+              "expression": "archive_status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "snapshot_archives_snapshot_id_snapshots_id_fk": {
+          "name": "snapshot_archives_snapshot_id_snapshots_id_fk",
+          "tableFrom": "snapshot_archives",
+          "tableTo": "snapshots",
+          "columnsFrom": [
+            "snapshot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.snapshot_comparisons": {
+      "name": "snapshot_comparisons",
+      "schema": "",
+      "columns": {
+        "from_snapshot_id": {
+          "name": "from_snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "to_snapshot_id": {
+          "name": "to_snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "from_snapshot_completed_at": {
+          "name": "from_snapshot_completed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "to_snapshot_completed_at": {
+          "name": "to_snapshot_completed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "new_companies_count": {
+          "name": "new_companies_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "deleted_companies_count": {
+          "name": "deleted_companies_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "region_moved_count": {
+          "name": "region_moved_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "country_moved_count": {
+          "name": "country_moved_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "owner_country_changed_count": {
+          "name": "owner_country_changed_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "delta_build_completed_at": {
+          "name": "delta_build_completed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "snapshot_comparisons_to_snapshot_idx": {
+          "name": "snapshot_comparisons_to_snapshot_idx",
+          "columns": [
+            {
+              "expression": "to_snapshot_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "snapshot_comparisons_from_snapshot_id_snapshots_id_fk": {
+          "name": "snapshot_comparisons_from_snapshot_id_snapshots_id_fk",
+          "tableFrom": "snapshot_comparisons",
+          "tableTo": "snapshots",
+          "columnsFrom": [
+            "from_snapshot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "snapshot_comparisons_to_snapshot_id_snapshots_id_fk": {
+          "name": "snapshot_comparisons_to_snapshot_id_snapshots_id_fk",
+          "tableFrom": "snapshot_comparisons",
+          "tableTo": "snapshots",
+          "columnsFrom": [
+            "to_snapshot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "snapshot_comparisons_from_snapshot_id_to_snapshot_id_pk": {
+          "name": "snapshot_comparisons_from_snapshot_id_to_snapshot_id_pk",
+          "columns": [
+            "from_snapshot_id",
+            "to_snapshot_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.snapshots": {
+      "name": "snapshots",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "status": {
+          "name": "status",
+          "type": "snapshot_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'staging'"
+        },
+        "source": {
+          "name": "source",
+          "type": "snapshot_source",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'scheduled'"
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.sync_locks": {
+      "name": "sync_locks",
+      "schema": "",
+      "columns": {
+        "lock_name": {
+          "name": "lock_name",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "holder_id": {
+          "name": "holder_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "acquired_at": {
+          "name": "acquired_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.sync_runs": {
+      "name": "sync_runs",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "snapshot_id": {
+          "name": "snapshot_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "sync_run_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'running'"
+        },
+        "holder_id": {
+          "name": "holder_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "phase": {
+          "name": "phase",
+          "type": "sync_phase",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'load_reference_data'"
+        },
+        "phase_cursor": {
+          "name": "phase_cursor",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "company_pages_processed": {
+          "name": "company_pages_processed",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "company_rows_written": {
+          "name": "company_rows_written",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "unique_users_fetched": {
+          "name": "unique_users_fetched",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error_message": {
+          "name": "error_message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "sync_runs_status_updated_idx": {
+          "name": "sync_runs_status_updated_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "sync_runs_snapshot_id_snapshots_id_fk": {
+          "name": "sync_runs_snapshot_id_snapshots_id_fk",
+          "tableFrom": "sync_runs",
+          "tableTo": "snapshots",
+          "columnsFrom": [
+            "snapshot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {
+    "public.snapshot_archive_status": {
+      "name": "snapshot_archive_status",
+      "schema": "public",
+      "values": [
+        "pending",
+        "uploaded",
+        "pruned",
+        "failed"
+      ]
+    },
+    "public.snapshot_source": {
+      "name": "snapshot_source",
+      "schema": "public",
+      "values": [
+        "scheduled",
+        "manual"
+      ]
+    },
+    "public.snapshot_status": {
+      "name": "snapshot_status",
+      "schema": "public",
+      "values": [
+        "staging",
+        "promoted",
+        "failed",
+        "archived"
+      ]
+    },
+    "public.sync_phase": {
+      "name": "sync_phase",
+      "schema": "public",
+      "values": [
+        "load_reference_data",
+        "sync_company_pages",
+        "build_aggregates",
+        "build_deltas",
+        "promote_snapshot"
+      ]
+    },
+    "public.sync_run_status": {
+      "name": "sync_run_status",
+      "schema": "public",
+      "values": [
+        "running",
+        "completed",
+        "failed",
+        "stale"
+      ]
+    }
+  },
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

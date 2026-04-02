@@ -7,7 +7,7 @@ import {
   uploadJsonObject,
   type ArchiveObjectResult,
 } from "@/lib/archive/r2";
-import { getDb, withSyncAdvisoryLock } from "@/lib/db/client";
+import { getDb, SyncLockLostError, withSyncLock } from "@/lib/db/client";
 import {
   appState,
   companyDeltas,
@@ -57,6 +57,8 @@ import {
 } from "@/lib/sync/normalize";
 import { getWareraClient } from "@/lib/warera/client";
 
+type DbExecutor = ReturnType<typeof getDb>;
+
 type SyncPhase =
   | "load_reference_data"
   | "sync_company_pages"
@@ -67,11 +69,17 @@ type SyncPhase =
 type ActiveRun = {
   runId: string;
   snapshotId: string;
+  holderId: string;
   phase: SyncPhase;
   phaseCursor: string | null;
   companyPagesProcessed: number;
   companyRowsWritten: number;
   uniqueUsersFetched: number;
+};
+
+type CompanyPagesPhaseResult = ActiveRun & {
+  passPagesProcessed: number;
+  hasMorePages: boolean;
 };
 
 type CleanupAction =
@@ -228,15 +236,14 @@ async function markStaleRuns() {
 
 async function updateRunProgress(input: {
   runId: string;
+  holderId: string;
   phase: SyncPhase;
   phaseCursor?: string | null;
   companyPagesProcessed?: number;
   companyRowsWritten?: number;
   uniqueUsersFetched?: number;
-}) {
-  const db = getDb();
-
-  await db
+}, executor: DbExecutor = getDb()) {
+  const result = await executor
     .update(syncRuns)
     .set({
       phase: input.phase,
@@ -246,7 +253,25 @@ async function updateRunProgress(input: {
       uniqueUsersFetched: input.uniqueUsersFetched,
       updatedAt: new Date(),
     })
-    .where(eq(syncRuns.id, input.runId));
+    .where(and(eq(syncRuns.id, input.runId), eq(syncRuns.holderId, input.holderId)))
+    .returning({ id: syncRuns.id });
+
+  if (result.length === 0) {
+    throw new SyncLockLostError();
+  }
+}
+
+async function assertRunOwnership(executor: DbExecutor, runId: string, holderId: string) {
+  const result = await executor.execute(sql`
+    select id
+    from sync_runs
+    where id = ${runId} and holder_id = ${holderId}
+    for update
+  `);
+
+  if (result.rows.length === 0) {
+    throw new SyncLockLostError();
+  }
 }
 
 async function bulkInsertCompanies(rows: CompanySnapshotRowInput[]) {
@@ -261,18 +286,17 @@ async function bulkInsertCompanies(rows: CompanySnapshotRowInput[]) {
   }
 }
 
-async function clearAggregates(snapshotId: string) {
-  const db = getDb();
-
-  await db.delete(regionAggregates).where(eq(regionAggregates.snapshotId, snapshotId));
-  await db.delete(countryAggregates).where(eq(countryAggregates.snapshotId, snapshotId));
-  await db.delete(itemAggregates).where(eq(itemAggregates.snapshotId, snapshotId));
+async function clearAggregates(snapshotId: string, executor: DbExecutor = getDb()) {
+  await executor.delete(regionAggregates).where(eq(regionAggregates.snapshotId, snapshotId));
+  await executor.delete(countryAggregates).where(eq(countryAggregates.snapshotId, snapshotId));
+  await executor.delete(itemAggregates).where(eq(itemAggregates.snapshotId, snapshotId));
 }
 
-async function buildCountryAggregates(snapshotId: string) {
-  const db = getDb();
-
-  await db.execute(sql`
+async function buildCountryAggregates(
+  snapshotId: string,
+  executor: DbExecutor = getDb(),
+) {
+  await executor.execute(sql`
     insert into country_aggregates (
       snapshot_id,
       country_id,
@@ -356,13 +380,15 @@ async function buildCountryAggregates(snapshotId: string) {
       on top_owner.snapshot_id = reference.snapshot_id
       and top_owner.country_id = reference.country_id
     where reference.snapshot_id = ${snapshotId}
+    on conflict do nothing
   `);
 }
 
-async function buildRegionAggregates(snapshotId: string) {
-  const db = getDb();
-
-  await db.execute(sql`
+async function buildRegionAggregates(
+  snapshotId: string,
+  executor: DbExecutor = getDb(),
+) {
+  await executor.execute(sql`
     insert into region_aggregates (
       snapshot_id,
       region_id,
@@ -450,13 +476,12 @@ async function buildRegionAggregates(snapshotId: string) {
       on top_owner.snapshot_id = reference.snapshot_id
       and top_owner.region_id = reference.region_id
     where reference.snapshot_id = ${snapshotId}
+    on conflict do nothing
   `);
 }
 
-async function buildItemAggregates(snapshotId: string) {
-  const db = getDb();
-
-  await db.execute(sql`
+async function buildItemAggregates(snapshotId: string, executor: DbExecutor = getDb()) {
+  await executor.execute(sql`
     insert into item_aggregates (
       snapshot_id,
       item_code,
@@ -473,6 +498,7 @@ async function buildItemAggregates(snapshotId: string) {
     from company_snapshot_rows
     where snapshot_id = ${snapshotId} and item_code is not null
     group by snapshot_id, item_code
+    on conflict do nothing
   `);
 }
 
@@ -673,6 +699,7 @@ async function buildDeltaPair(input: SnapshotPair) {
         paired_rows.production_delta
       from paired_rows
       where paired_rows.tracked_changed
+      on conflict do nothing
     `);
 
     await tx.execute(sql`
@@ -793,6 +820,7 @@ async function buildDeltaPair(input: SnapshotPair) {
         on from_rows.country_id = to_rows.country_id
       left join movement_counts
         on movement_counts.country_id = coalesce(to_rows.country_id, from_rows.country_id)
+      on conflict do nothing
     `);
 
     await tx.execute(sql`
@@ -892,6 +920,7 @@ async function buildDeltaPair(input: SnapshotPair) {
         on from_rows.region_id = to_rows.region_id
       left join movement_counts
         on movement_counts.region_id = coalesce(to_rows.region_id, from_rows.region_id)
+      on conflict do nothing
     `);
 
     await tx.execute(sql`
@@ -933,6 +962,7 @@ async function buildDeltaPair(input: SnapshotPair) {
         where snapshot_id = ${input.toSnapshotId}
       ) as to_rows
         on from_rows.item_code = to_rows.item_code
+      on conflict do nothing
     `);
 
     await tx.execute(sql`
@@ -963,15 +993,19 @@ async function buildDeltaPair(input: SnapshotPair) {
       where
         from_snapshot_id = ${input.fromSnapshotId}
         and to_snapshot_id = ${input.toSnapshotId}
+      on conflict do nothing
     `);
   });
 }
 
-async function ensureSnapshotCompletedAt(snapshotId: string) {
-  const db = getDb();
-  const snapshot = await db.query.snapshots.findFirst({
-    where: eq(snapshots.id, snapshotId),
-  });
+async function ensureSnapshotCompletedAt(
+  snapshotId: string,
+  executor: DbExecutor = getDb(),
+) {
+  const [snapshot] = await executor
+    .select({ completedAt: snapshots.completedAt })
+    .from(snapshots)
+    .where(eq(snapshots.id, snapshotId));
 
   if (!snapshot) {
     throw new Error(`Snapshot ${snapshotId} was not found.`);
@@ -982,7 +1016,7 @@ async function ensureSnapshotCompletedAt(snapshotId: string) {
   }
 
   const completionTime = new Date();
-  const [updatedSnapshot] = await db
+  const [updatedSnapshot] = await executor
     .update(snapshots)
     .set({
       completedAt: completionTime,
@@ -993,12 +1027,15 @@ async function ensureSnapshotCompletedAt(snapshotId: string) {
   return updatedSnapshot?.completedAt ?? completionTime;
 }
 
-async function promoteSnapshot(snapshotId: string, runId: string) {
+async function promoteSnapshot(snapshotId: string, runId: string, holderId: string) {
   const db = getDb();
   const now = new Date();
-  const completionTime = await ensureSnapshotCompletedAt(snapshotId);
 
   await db.transaction(async (tx) => {
+    const executor = tx as unknown as DbExecutor;
+    await assertRunOwnership(executor, runId, holderId);
+    const completionTime = await ensureSnapshotCompletedAt(snapshotId, executor);
+
     await tx
       .update(snapshots)
       .set({ status: "archived" })
@@ -1031,7 +1068,7 @@ async function promoteSnapshot(snapshotId: string, runId: string) {
         updatedAt: now,
         finishedAt: now,
       })
-      .where(eq(syncRuns.id, runId));
+      .where(and(eq(syncRuns.id, runId), eq(syncRuns.holderId, holderId)));
   });
 }
 
@@ -1069,69 +1106,85 @@ async function failRun(input: {
   }
 }
 
-async function getActiveRun() {
+async function getActiveRun(holderId: string): Promise<ActiveRun | null> {
   const db = getDb();
-
-  const runningRun = await db.query.syncRuns.findFirst({
-    where: eq(syncRuns.status, "running"),
-    orderBy: [desc(syncRuns.startedAt)],
-  });
+  const runningRunResult = await db.execute(sql<ActiveRun>`
+    update sync_runs
+    set holder_id = ${holderId}, updated_at = now()
+    where id = (
+      select id
+      from sync_runs
+      where status = 'running'
+      order by started_at desc
+      limit 1
+    ) and status = 'running'
+    returning
+      id as "runId",
+      snapshot_id as "snapshotId",
+      holder_id as "holderId",
+      phase,
+      phase_cursor as "phaseCursor",
+      company_pages_processed as "companyPagesProcessed",
+      company_rows_written as "companyRowsWritten",
+      unique_users_fetched as "uniqueUsersFetched"
+  `);
+  const runningRun = runningRunResult.rows[0] as ActiveRun | undefined;
 
   if (runningRun) {
-    return {
-      runId: runningRun.id,
-      snapshotId: runningRun.snapshotId,
-      phase: runningRun.phase,
-      phaseCursor: runningRun.phaseCursor,
-      companyPagesProcessed: runningRun.companyPagesProcessed,
-      companyRowsWritten: runningRun.companyRowsWritten,
-      uniqueUsersFetched: runningRun.uniqueUsersFetched,
-    } satisfies ActiveRun;
+    return runningRun;
   }
 
-  const resumableFailedRun = await db.query.syncRuns.findFirst({
-    where: and(
-      eq(syncRuns.status, "failed"),
-      gt(syncRuns.updatedAt, new Date(Date.now() - SYNC_FAILED_RESUME_WINDOW_MS)),
-    ),
-    orderBy: [desc(syncRuns.startedAt)],
+  const resumeCutoff = new Date(Date.now() - SYNC_FAILED_RESUME_WINDOW_MS);
+
+  return db.transaction(async (tx) => {
+    const claimedResult = await tx.execute(sql<ActiveRun>`
+      update sync_runs
+      set
+        holder_id = ${holderId},
+        status = 'running',
+        updated_at = now(),
+        finished_at = null,
+        error_message = null
+      where id = (
+        select id
+        from sync_runs
+        where status = 'failed' and updated_at > ${resumeCutoff}
+        order by started_at desc
+        limit 1
+      ) and status = 'failed'
+      returning
+        id as "runId",
+        snapshot_id as "snapshotId",
+        holder_id as "holderId",
+        phase,
+        phase_cursor as "phaseCursor",
+        company_pages_processed as "companyPagesProcessed",
+        company_rows_written as "companyRowsWritten",
+        unique_users_fetched as "uniqueUsersFetched"
+    `);
+    const claimed = claimedResult.rows[0] as ActiveRun | undefined;
+
+    if (!claimed) {
+      return null;
+    }
+
+    await tx
+      .update(snapshots)
+      .set({
+        status: "staging",
+        completedAt: null,
+        notes: null,
+      })
+      .where(eq(snapshots.id, claimed.snapshotId));
+
+    return claimed;
   });
-
-  if (!resumableFailedRun) {
-    return null;
-  }
-
-  await db
-    .update(syncRuns)
-    .set({
-      status: "running",
-      updatedAt: new Date(),
-      finishedAt: null,
-      errorMessage: null,
-    })
-    .where(eq(syncRuns.id, resumableFailedRun.id));
-
-  await db
-    .update(snapshots)
-    .set({
-      status: "staging",
-      completedAt: null,
-      notes: null,
-    })
-    .where(eq(snapshots.id, resumableFailedRun.snapshotId));
-
-  return {
-    runId: resumableFailedRun.id,
-    snapshotId: resumableFailedRun.snapshotId,
-    phase: resumableFailedRun.phase,
-    phaseCursor: resumableFailedRun.phaseCursor,
-    companyPagesProcessed: resumableFailedRun.companyPagesProcessed,
-    companyRowsWritten: resumableFailedRun.companyRowsWritten,
-    uniqueUsersFetched: resumableFailedRun.uniqueUsersFetched,
-  } satisfies ActiveRun;
 }
 
-async function createSyncRun(source: "manual" | "scheduled") {
+async function createSyncRun(
+  source: "manual" | "scheduled",
+  holderId: string,
+): Promise<ActiveRun> {
   const db = getDb();
 
   const [snapshot] = await db
@@ -1146,6 +1199,7 @@ async function createSyncRun(source: "manual" | "scheduled") {
     .insert(syncRuns)
     .values({
       snapshotId: snapshot.id,
+      holderId,
       status: "running",
       phase: "load_reference_data",
     })
@@ -1154,6 +1208,7 @@ async function createSyncRun(source: "manual" | "scheduled") {
   return {
     runId: syncRun.id,
     snapshotId: snapshot.id,
+    holderId,
     phase: "load_reference_data",
     phaseCursor: null,
     companyPagesProcessed: 0,
@@ -1277,17 +1332,25 @@ async function fetchMissingOwnersFromApi(input: {
   return users.length;
 }
 
-async function resetCompanySyncPhase(run: ActiveRun) {
+async function resetCompanySyncPhase(run: ActiveRun): Promise<ActiveRun> {
   const db = getDb();
 
-  await db.delete(companySnapshotRows).where(eq(companySnapshotRows.snapshotId, run.snapshotId));
-  await updateRunProgress({
-    runId: run.runId,
-    phase: "sync_company_pages",
-    phaseCursor: null,
-    companyPagesProcessed: 0,
-    companyRowsWritten: 0,
-    uniqueUsersFetched: 0,
+  await db.transaction(async (tx) => {
+    const executor = tx as unknown as DbExecutor;
+    await assertRunOwnership(executor, run.runId, run.holderId);
+
+    await tx
+      .delete(companySnapshotRows)
+      .where(eq(companySnapshotRows.snapshotId, run.snapshotId));
+    await updateRunProgress({
+      runId: run.runId,
+      holderId: run.holderId,
+      phase: "sync_company_pages",
+      phaseCursor: null,
+      companyPagesProcessed: 0,
+      companyRowsWritten: 0,
+      uniqueUsersFetched: 0,
+    }, executor);
   });
 
   return {
@@ -1296,6 +1359,34 @@ async function resetCompanySyncPhase(run: ActiveRun) {
     companyPagesProcessed: 0,
     companyRowsWritten: 0,
     uniqueUsersFetched: 0,
+  } satisfies ActiveRun;
+}
+
+async function rebuildAggregatesPhase(run: ActiveRun): Promise<ActiveRun> {
+  const db = getDb();
+
+  await db.transaction(async (tx) => {
+    const executor = tx as unknown as DbExecutor;
+    await assertRunOwnership(executor, run.runId, run.holderId);
+
+    await clearAggregates(run.snapshotId, executor);
+    await buildCountryAggregates(run.snapshotId, executor);
+    await buildRegionAggregates(run.snapshotId, executor);
+    await buildItemAggregates(run.snapshotId, executor);
+    await updateRunProgress({
+      runId: run.runId,
+      holderId: run.holderId,
+      phase: "build_deltas",
+      phaseCursor: run.phaseCursor,
+      companyPagesProcessed: run.companyPagesProcessed,
+      companyRowsWritten: run.companyRowsWritten,
+      uniqueUsersFetched: run.uniqueUsersFetched,
+    }, executor);
+  });
+
+  return {
+    ...run,
+    phase: "build_deltas",
   } satisfies ActiveRun;
 }
 
@@ -1348,7 +1439,10 @@ async function collectCompanyIdsForUsers(userIds: string[]) {
   return Array.from(companyIds);
 }
 
-async function processCompanyPagesPhase(run: ActiveRun) {
+async function processCompanyPagesPhase(
+  run: ActiveRun,
+  ensureLockHeld: () => void,
+): Promise<CompanyPagesPhaseResult> {
   let activeRun = run;
 
   if (activeRun.phaseCursor && activeRun.phaseCursor !== "") {
@@ -1384,6 +1478,8 @@ async function processCompanyPagesPhase(run: ActiveRun) {
     passPagesProcessed < SYNC_MAX_PAGES_PER_PASS &&
     syncCursor.countryIndex < references.countries.length
   ) {
+    ensureLockHeld();
+
     const country = references.countries[syncCursor.countryIndex];
 
     if (!country) {
@@ -1405,9 +1501,11 @@ async function processCompanyPagesPhase(run: ActiveRun) {
     companyPagesProcessed += 1;
     syncCursor = advanceCompanySyncCursor(syncCursor, userPage.nextCursor);
 
+    ensureLockHeld();
     const companyIds = await collectCompanyIdsForUsers(
       userPage.items.map((user) => user._id),
     );
+    ensureLockHeld();
     const companies = await Promise.all(
       companyIds.map((companyId) => client.company.getById({ companyId })),
     );
@@ -1443,11 +1541,13 @@ async function processCompanyPagesPhase(run: ActiveRun) {
       });
     });
 
+    ensureLockHeld();
     await bulkInsertCompanies(companyRows);
     companyRowsWritten += companyRows.length;
 
     await updateRunProgress({
       runId: activeRun.runId,
+      holderId: activeRun.holderId,
       phase: "sync_company_pages",
       phaseCursor:
         syncCursor.countryIndex >= references.countries.length
@@ -1467,6 +1567,7 @@ async function processCompanyPagesPhase(run: ActiveRun) {
   return {
     runId: activeRun.runId,
     snapshotId: activeRun.snapshotId,
+    holderId: activeRun.holderId,
     phase: "sync_company_pages" as const,
     phaseCursor: lastCursor,
     companyPagesProcessed,
@@ -1747,10 +1848,25 @@ async function archiveSnapshotToR2(snapshotId: string) {
     throw new Error("Only completed snapshots can be archived to R2.");
   }
 
-  const latestRun = await db.query.syncRuns.findFirst({
-    where: eq(syncRuns.snapshotId, snapshotId),
-    orderBy: [desc(syncRuns.startedAt)],
-  });
+  const [latestRun] = await db
+    .select({
+      id: syncRuns.id,
+      snapshotId: syncRuns.snapshotId,
+      status: syncRuns.status,
+      phase: syncRuns.phase,
+      phaseCursor: syncRuns.phaseCursor,
+      companyPagesProcessed: syncRuns.companyPagesProcessed,
+      companyRowsWritten: syncRuns.companyRowsWritten,
+      uniqueUsersFetched: syncRuns.uniqueUsersFetched,
+      startedAt: syncRuns.startedAt,
+      updatedAt: syncRuns.updatedAt,
+      finishedAt: syncRuns.finishedAt,
+      errorMessage: syncRuns.errorMessage,
+    })
+    .from(syncRuns)
+    .where(eq(syncRuns.snapshotId, snapshotId))
+    .orderBy(desc(syncRuns.startedAt))
+    .limit(1);
   const rowCounts = await getSnapshotRowCounts(snapshotId);
   const config = getR2ArchiveConfig();
   const objectPrefix = buildArchivePrefix({
@@ -1981,22 +2097,28 @@ async function selectArchiveCandidates() {
 }
 
 export async function runSyncPass(source: "manual" | "scheduled" = "manual") {
-  const lockResult = await withSyncAdvisoryLock(async () => {
+  const lockResult = await withSyncLock(async ({
+    holderId,
+    ensureLockHeld,
+    checkLockOwnership,
+  }) => {
     const startedAt = Date.now();
     await markStaleRuns();
 
-    let activeRun = await getActiveRun();
+    let activeRun = await getActiveRun(holderId);
     const resumedExistingRun = Boolean(activeRun);
 
     try {
       if (!activeRun) {
-        activeRun = await createSyncRun(source);
+        activeRun = await createSyncRun(source, holderId);
       }
 
       if (activeRun.phase === "load_reference_data") {
+        ensureLockHeld();
         await ensureReferenceData(activeRun.snapshotId);
         await updateRunProgress({
           runId: activeRun.runId,
+          holderId: activeRun.holderId,
           phase: "sync_company_pages",
           phaseCursor: activeRun.phaseCursor,
           companyPagesProcessed: activeRun.companyPagesProcessed,
@@ -2011,11 +2133,12 @@ export async function runSyncPass(source: "manual" | "scheduled" = "manual") {
       }
 
       if (activeRun.phase === "sync_company_pages") {
-        const pageResult = await processCompanyPagesPhase(activeRun);
+        const pageResult = await processCompanyPagesPhase(activeRun, ensureLockHeld);
 
         activeRun = {
           runId: pageResult.runId,
           snapshotId: pageResult.snapshotId,
+          holderId: pageResult.holderId,
           phase: "sync_company_pages",
           phaseCursor: pageResult.phaseCursor,
           companyPagesProcessed: pageResult.companyPagesProcessed,
@@ -2039,6 +2162,7 @@ export async function runSyncPass(source: "manual" | "scheduled" = "manual") {
 
         await updateRunProgress({
           runId: activeRun.runId,
+          holderId: activeRun.holderId,
           phase: "build_aggregates",
           phaseCursor: activeRun.phaseCursor,
           companyPagesProcessed: activeRun.companyPagesProcessed,
@@ -2053,31 +2177,17 @@ export async function runSyncPass(source: "manual" | "scheduled" = "manual") {
       }
 
       if (activeRun.phase === "build_aggregates") {
-        await clearAggregates(activeRun.snapshotId);
-        await buildCountryAggregates(activeRun.snapshotId);
-        await buildRegionAggregates(activeRun.snapshotId);
-        await buildItemAggregates(activeRun.snapshotId);
-
-        await updateRunProgress({
-          runId: activeRun.runId,
-          phase: "build_deltas",
-          phaseCursor: activeRun.phaseCursor,
-          companyPagesProcessed: activeRun.companyPagesProcessed,
-          companyRowsWritten: activeRun.companyRowsWritten,
-          uniqueUsersFetched: activeRun.uniqueUsersFetched,
-        });
-
-        activeRun = {
-          ...activeRun,
-          phase: "build_deltas",
-        };
+        ensureLockHeld();
+        activeRun = await rebuildAggregatesPhase(activeRun);
       }
 
       if (activeRun.phase === "build_deltas") {
+        ensureLockHeld();
         await ensureSnapshotCompletedAt(activeRun.snapshotId);
         const previousPromotedSnapshot = await getCurrentPromotedSnapshot();
 
         if (previousPromotedSnapshot) {
+          ensureLockHeld();
           await buildDeltaPair({
             fromSnapshotId: previousPromotedSnapshot.id,
             toSnapshotId: activeRun.snapshotId,
@@ -2086,6 +2196,7 @@ export async function runSyncPass(source: "manual" | "scheduled" = "manual") {
 
         await updateRunProgress({
           runId: activeRun.runId,
+          holderId: activeRun.holderId,
           phase: "promote_snapshot",
           phaseCursor: activeRun.phaseCursor,
           companyPagesProcessed: activeRun.companyPagesProcessed,
@@ -2099,7 +2210,8 @@ export async function runSyncPass(source: "manual" | "scheduled" = "manual") {
         };
       }
 
-      await promoteSnapshot(activeRun.snapshotId, activeRun.runId);
+      ensureLockHeld();
+      await promoteSnapshot(activeRun.snapshotId, activeRun.runId, activeRun.holderId);
 
       return {
         status: "completed" as const,
@@ -2113,6 +2225,22 @@ export async function runSyncPass(source: "manual" | "scheduled" = "manual") {
         }),
       };
     } catch (error) {
+      if (error instanceof SyncLockLostError) {
+        return { status: "running" as const, summary: null };
+      }
+
+      let stillOwner: boolean;
+
+      try {
+        stillOwner = await checkLockOwnership();
+      } catch {
+        stillOwner = true;
+      }
+
+      if (!stillOwner) {
+        return { status: "running" as const, summary: null };
+      }
+
       await failRun({
         snapshotId: activeRun?.snapshotId ?? null,
         runId: activeRun?.runId ?? null,
@@ -2137,76 +2265,100 @@ export async function runSyncPass(source: "manual" | "scheduled" = "manual") {
 }
 
 export async function runCleanupPass() {
-  const lockResult = await withSyncAdvisoryLock(async () => {
+  const lockResult = await withSyncLock(async ({ ensureLockHeld, checkLockOwnership }) => {
     const startedAt = Date.now();
     await markStaleRuns();
 
-    const failedSnapshotId = await selectFailedSnapshotForPrune();
+    try {
+      const failedSnapshotId = await selectFailedSnapshotForPrune();
 
-    if (failedSnapshotId) {
-      await deleteSnapshotHotRows(failedSnapshotId);
+      if (failedSnapshotId) {
+        ensureLockHeld();
+        await deleteSnapshotHotRows(failedSnapshotId);
+
+        return {
+          status: "working" as const,
+          summary: buildCleanupSummary("pruned_failed_snapshot", startedAt, {
+            snapshotId: failedSnapshotId,
+          }),
+        };
+      }
+
+      const successfulSnapshots = (await getSuccessfulSnapshots()).filter(
+        (snapshot): snapshot is typeof snapshot & { completedAt: Date } =>
+          Boolean(snapshot.completedAt),
+      );
+      const existingPairs = await getExistingComparisonPairs();
+      const missingPair = findOldestMissingComparisonPair({
+        successfulSnapshots,
+        existingPairs: existingPairs.map((pair) => ({
+          fromSnapshotId: pair.fromSnapshotId,
+          toSnapshotId: pair.toSnapshotId,
+        })),
+      });
+
+      if (missingPair) {
+        ensureLockHeld();
+        await buildDeltaPair(missingPair);
+
+        return {
+          status: "working" as const,
+          summary: buildCleanupSummary("backfilled_snapshot_pair", startedAt, {
+            fromSnapshotId: missingPair.fromSnapshotId,
+            toSnapshotId: missingPair.toSnapshotId,
+          }),
+        };
+      }
+
+      const { uploadCandidate, pruneCandidate } = await selectArchiveCandidates();
+
+      if (uploadCandidate) {
+        ensureLockHeld();
+        await archiveSnapshotToR2(uploadCandidate.id);
+
+        return {
+          status: "working" as const,
+          summary: buildCleanupSummary("archived_snapshot", startedAt, {
+            snapshotId: uploadCandidate.id,
+          }),
+        };
+      }
+
+      if (pruneCandidate) {
+        ensureLockHeld();
+        await pruneArchivedSnapshot(pruneCandidate.id);
+
+        return {
+          status: "working" as const,
+          summary: buildCleanupSummary("pruned_archived_snapshot", startedAt, {
+            snapshotId: pruneCandidate.id,
+          }),
+        };
+      }
 
       return {
-        status: "working" as const,
-        summary: buildCleanupSummary("pruned_failed_snapshot", startedAt, {
-          snapshotId: failedSnapshotId,
-        }),
+        status: "idle" as const,
+        summary: null,
       };
+    } catch (error) {
+      if (error instanceof SyncLockLostError) {
+        return { status: "busy" as const, summary: null };
+      }
+
+      let stillOwner: boolean;
+
+      try {
+        stillOwner = await checkLockOwnership();
+      } catch {
+        stillOwner = true;
+      }
+
+      if (!stillOwner) {
+        return { status: "busy" as const, summary: null };
+      }
+
+      throw error;
     }
-
-    const successfulSnapshots = (await getSuccessfulSnapshots()).filter(
-      (snapshot): snapshot is typeof snapshot & { completedAt: Date } =>
-        Boolean(snapshot.completedAt),
-    );
-    const existingPairs = await getExistingComparisonPairs();
-    const missingPair = findOldestMissingComparisonPair({
-      successfulSnapshots,
-      existingPairs: existingPairs.map((pair) => ({
-        fromSnapshotId: pair.fromSnapshotId,
-        toSnapshotId: pair.toSnapshotId,
-      })),
-    });
-
-    if (missingPair) {
-      await buildDeltaPair(missingPair);
-
-      return {
-        status: "working" as const,
-        summary: buildCleanupSummary("backfilled_snapshot_pair", startedAt, {
-          fromSnapshotId: missingPair.fromSnapshotId,
-          toSnapshotId: missingPair.toSnapshotId,
-        }),
-      };
-    }
-
-    const { uploadCandidate, pruneCandidate } = await selectArchiveCandidates();
-
-    if (uploadCandidate) {
-      await archiveSnapshotToR2(uploadCandidate.id);
-
-      return {
-        status: "working" as const,
-        summary: buildCleanupSummary("archived_snapshot", startedAt, {
-          snapshotId: uploadCandidate.id,
-        }),
-      };
-    }
-
-    if (pruneCandidate) {
-      await pruneArchivedSnapshot(pruneCandidate.id);
-
-      return {
-        status: "working" as const,
-        summary: buildCleanupSummary("pruned_archived_snapshot", startedAt, {
-          snapshotId: pruneCandidate.id,
-        }),
-      };
-    }
-
-    return {
-      status: "idle" as const,
-      summary: null,
-    };
   });
 
   if (!lockResult.acquired) {
@@ -2226,9 +2378,24 @@ export async function runCleanupPass() {
 export async function getLatestSyncRunStatus() {
   const db = getDb();
 
-  const latestRun = await db.query.syncRuns.findFirst({
-    orderBy: [desc(syncRuns.startedAt)],
-  });
+  const [latestRun] = await db
+    .select({
+      id: syncRuns.id,
+      snapshotId: syncRuns.snapshotId,
+      status: syncRuns.status,
+      phase: syncRuns.phase,
+      phaseCursor: syncRuns.phaseCursor,
+      companyPagesProcessed: syncRuns.companyPagesProcessed,
+      companyRowsWritten: syncRuns.companyRowsWritten,
+      uniqueUsersFetched: syncRuns.uniqueUsersFetched,
+      startedAt: syncRuns.startedAt,
+      updatedAt: syncRuns.updatedAt,
+      finishedAt: syncRuns.finishedAt,
+      errorMessage: syncRuns.errorMessage,
+    })
+    .from(syncRuns)
+    .orderBy(desc(syncRuns.startedAt))
+    .limit(1);
 
   const currentSnapshot = await db.query.snapshots.findFirst({
     where: eq(snapshots.status, "promoted"),

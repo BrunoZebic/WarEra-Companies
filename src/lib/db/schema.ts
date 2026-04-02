@@ -64,6 +64,7 @@ export const syncRuns = pgTable(
       .references(() => snapshots.id, { onDelete: "cascade" })
       .notNull(),
     status: syncRunStatusEnum("status").default("running").notNull(),
+    holderId: text("holder_id"),
     phase: syncPhaseEnum("phase").default("load_reference_data").notNull(),
     phaseCursor: text("phase_cursor"),
     companyPagesProcessed: integer("company_pages_processed").default(0).notNull(),
@@ -80,6 +81,13 @@ export const syncRuns = pgTable(
   },
   (table) => [index("sync_runs_status_updated_idx").on(table.status, table.updatedAt)],
 );
+
+export const syncLocks = pgTable("sync_locks", {
+  lockName: text("lock_name").primaryKey(),
+  holderId: text("holder_id").notNull(),
+  acquiredAt: timestamp("acquired_at", { withTimezone: true }).defaultNow().notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});
 
 export const countryReference = pgTable(
   "country_reference",

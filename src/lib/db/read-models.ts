@@ -65,9 +65,24 @@ export async function getSnapshotMeta() {
       })
     : null;
 
-  const latestRun = await db.query.syncRuns.findFirst({
-    orderBy: [desc(syncRuns.startedAt)],
-  });
+  const [latestRun] = await db
+    .select({
+      id: syncRuns.id,
+      snapshotId: syncRuns.snapshotId,
+      status: syncRuns.status,
+      phase: syncRuns.phase,
+      phaseCursor: syncRuns.phaseCursor,
+      companyPagesProcessed: syncRuns.companyPagesProcessed,
+      companyRowsWritten: syncRuns.companyRowsWritten,
+      uniqueUsersFetched: syncRuns.uniqueUsersFetched,
+      startedAt: syncRuns.startedAt,
+      updatedAt: syncRuns.updatedAt,
+      finishedAt: syncRuns.finishedAt,
+      errorMessage: syncRuns.errorMessage,
+    })
+    .from(syncRuns)
+    .orderBy(desc(syncRuns.startedAt))
+    .limit(1);
 
   return {
     configured: true as const,
