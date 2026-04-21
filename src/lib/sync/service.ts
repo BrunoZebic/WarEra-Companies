@@ -13,6 +13,7 @@ import {
   companyDeltas,
   companySnapshotRows,
   countryAggregates,
+  countryTaxHourly,
   countryDeltas,
   countryReference,
   itemAggregates,
@@ -55,6 +56,10 @@ import {
   type OwnerSnapshotInput,
   type RegionReferenceRowInput,
 } from "@/lib/sync/normalize";
+import {
+  buildCompanyHourlyWagesMap,
+  getUtcHourBucketStart,
+} from "@/lib/sync/tax-helpers";
 import { getWareraClient } from "@/lib/warera/client";
 
 type DbExecutor = ReturnType<typeof getDb>;
@@ -499,6 +504,86 @@ async function buildItemAggregates(snapshotId: string, executor: DbExecutor = ge
     where snapshot_id = ${snapshotId} and item_code is not null
     group by snapshot_id, item_code
     on conflict do nothing
+  `);
+}
+
+async function replaceCountryTaxHourlyBucket(input: {
+  snapshotId: string;
+  bucketStartedAt: Date;
+  executor?: DbExecutor;
+}) {
+  const executor = input.executor ?? getDb();
+
+  await executor.delete(countryTaxHourly).where(
+    eq(countryTaxHourly.bucketStartedAt, input.bucketStartedAt),
+  );
+
+  await executor.execute(sql`
+    insert into country_tax_hourly (
+      bucket_started_at,
+      snapshot_id,
+      country_id,
+      country_code,
+      country_name,
+      region_id,
+      region_code,
+      region_name,
+      owner_country_group_key,
+      owner_country_id,
+      owner_country_code,
+      owner_country_name,
+      item_code,
+      core,
+      wages_paid,
+      tax_income,
+      tax_rate,
+      company_observations
+    )
+    select
+      ${input.bucketStartedAt} as bucket_started_at,
+      csr.snapshot_id,
+      csr.country_id,
+      csr.country_code,
+      csr.country_name,
+      csr.region_id,
+      csr.region_code,
+      csr.region_name,
+      coalesce(csr.owner_country_id, '__unknown__') as owner_country_group_key,
+      csr.owner_country_id,
+      csr.owner_country_code,
+      csr.owner_country_name,
+      csr.item_code,
+      (rr.initial_country_id = csr.country_id) as core,
+      coalesce(sum(csr.hourly_wages), 0)::double precision as wages_paid,
+      (
+        coalesce(sum(csr.hourly_wages), 0) * cr.income_tax / 100.0
+      )::double precision as tax_income,
+      cr.income_tax::double precision as tax_rate,
+      count(*)::int as company_observations
+    from company_snapshot_rows csr
+    inner join country_reference cr
+      on cr.snapshot_id = csr.snapshot_id
+      and cr.country_id = csr.country_id
+    inner join region_reference rr
+      on rr.snapshot_id = csr.snapshot_id
+      and rr.region_id = csr.region_id
+    where
+      csr.snapshot_id = ${input.snapshotId}
+      and csr.item_code is not null
+    group by
+      csr.snapshot_id,
+      csr.country_id,
+      csr.country_code,
+      csr.country_name,
+      csr.region_id,
+      csr.region_code,
+      csr.region_name,
+      csr.owner_country_id,
+      csr.owner_country_code,
+      csr.owner_country_name,
+      csr.item_code,
+      rr.initial_country_id,
+      cr.income_tax
   `);
 }
 
@@ -1035,6 +1120,7 @@ async function promoteSnapshot(snapshotId: string, runId: string, holderId: stri
     const executor = tx as unknown as DbExecutor;
     await assertRunOwnership(executor, runId, holderId);
     const completionTime = await ensureSnapshotCompletedAt(snapshotId, executor);
+    const bucketStartedAt = getUtcHourBucketStart(completionTime);
 
     await tx
       .update(snapshots)
@@ -1059,6 +1145,12 @@ async function promoteSnapshot(snapshotId: string, runId: string, holderId: stri
         target: appState.key,
         set: { value: snapshotId },
       });
+
+    await replaceCountryTaxHourlyBucket({
+      snapshotId,
+      bucketStartedAt,
+      executor,
+    });
 
     await tx
       .update(syncRuns)
@@ -1332,6 +1424,25 @@ async function fetchMissingOwnersFromApi(input: {
   return users.length;
 }
 
+async function fetchHourlyWagesByCompanyForUsers(userIds: string[]) {
+  if (userIds.length === 0) {
+    return new Map<string, number>();
+  }
+
+  const client = getWareraClient();
+  const workerSnapshots: Awaited<ReturnType<typeof client.worker.getWorkers>>[] = [];
+
+  for (const batch of chunk(userIds, 25)) {
+    const responses = await Promise.all(
+      batch.map((userId) => client.worker.getWorkers({ userId })),
+    );
+
+    workerSnapshots.push(...responses);
+  }
+
+  return buildCompanyHourlyWagesMap(workerSnapshots);
+}
+
 async function resetCompanySyncPhase(run: ActiveRun): Promise<ActiveRun> {
   const db = getDb();
 
@@ -1509,6 +1620,10 @@ async function processCompanyPagesPhase(
     const companies = await Promise.all(
       companyIds.map((companyId) => client.company.getById({ companyId })),
     );
+    ensureLockHeld();
+    const hourlyWagesByCompanyId = await fetchHourlyWagesByCompanyForUsers(
+      userPage.items.map((user) => user._id),
+    );
 
     const pageOwnerIds = Array.from(new Set(companies.map((company) => company.user)));
     if (pageOwnerIds.length > 0) {
@@ -1538,6 +1653,7 @@ async function processCompanyPagesPhase(
         company,
         regionById: references.regionById,
         owner,
+        hourlyWages: hourlyWagesByCompanyId.get(company._id) ?? 0,
       });
     });
 

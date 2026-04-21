@@ -2,6 +2,11 @@ import "server-only";
 
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 
+import {
+  type CountryTaxApiResponse,
+  type CountryTaxEntry,
+  formatUtcHourInput,
+} from "@/lib/country-tax";
 import { getDb, hasDatabaseUrl } from "@/lib/db/client";
 import {
   appState,
@@ -89,6 +94,190 @@ export async function getSnapshotMeta() {
     currentSnapshot,
     latestRun,
   };
+}
+
+type CountryTaxToolOption = {
+  code: string;
+  name: string;
+};
+
+export async function getCountryTaxToolPageData() {
+  const snapshotMeta = await getSnapshotMeta();
+
+  if (!snapshotMeta.configured) {
+    return {
+      ...snapshotMeta,
+      availableCountries: [] as CountryTaxToolOption[],
+      availableItemCodes: [] as string[],
+      earliestHour: null as string | null,
+      latestHour: null as string | null,
+    };
+  }
+
+  const db = getDb();
+
+  try {
+    const [countriesResult, itemCodesResult, boundsResult] = await Promise.all([
+      db.execute(sql<CountryTaxToolOption>`
+        select
+          country_code as "code",
+          max(country_name) as "name"
+        from country_tax_hourly
+        group by country_code
+        order by max(country_name) asc
+      `),
+      db.execute(sql<{ itemCode: string }>`
+        select distinct
+          item_code as "itemCode"
+        from country_tax_hourly
+        order by item_code asc
+      `),
+      db.execute(sql<{ earliestHour: Date | null; latestHour: Date | null }>`
+        select
+          min(bucket_started_at) as "earliestHour",
+          max(bucket_started_at) as "latestHour"
+        from country_tax_hourly
+      `),
+    ]);
+
+    const bounds = boundsResult.rows[0] as
+      | {
+          earliestHour: Date | null;
+          latestHour: Date | null;
+        }
+      | undefined;
+
+    return {
+      ...snapshotMeta,
+      availableCountries: countriesResult.rows as CountryTaxToolOption[],
+      availableItemCodes: (itemCodesResult.rows as Array<{ itemCode: string }>).map(
+        (row) => row.itemCode,
+      ),
+      earliestHour: bounds?.earliestHour ? formatUtcHourInput(bounds.earliestHour) : null,
+      latestHour: bounds?.latestHour ? formatUtcHourInput(bounds.latestHour) : null,
+    };
+  } catch (error) {
+    if (!isMissingRelationError(error)) {
+      throw error;
+    }
+
+    return {
+      ...snapshotMeta,
+      availableCountries: [] as CountryTaxToolOption[],
+      availableItemCodes: [] as string[],
+      earliestHour: null as string | null,
+      latestHour: null as string | null,
+    };
+  }
+}
+
+export async function getCountryTaxRangeData(input: {
+  countryCode: string;
+  fromHour: Date;
+  toHour: Date;
+  itemCode?: string | null;
+}): Promise<CountryTaxApiResponse> {
+  if (!hasDatabaseUrl()) {
+    throw new Error("DATABASE_URL is not configured.");
+  }
+
+  const db = getDb();
+  const countryCode = input.countryCode.trim().toLowerCase();
+
+  try {
+    const [countryResult, entriesResult] = await Promise.all([
+      db.execute(sql<{ countryName: string | null }>`
+        select
+          max(country_name) as "countryName"
+        from country_tax_hourly
+        where country_code = ${countryCode}
+      `),
+      input.itemCode
+        ? db.execute(sql<CountryTaxEntry>`
+            select
+              region_id as "regionId",
+              max(region_name) as "regionName",
+              owner_country_id as "ownerCountryId",
+              max(owner_country_code) as "ownerCountryCode",
+              max(owner_country_name) as "ownerCountryName",
+              item_code as "itemCode",
+              core as "core",
+              coalesce(sum(wages_paid), 0)::double precision as "wagesPaid",
+              coalesce(sum(tax_income), 0)::double precision as "taxIncome",
+              case
+                when coalesce(sum(wages_paid), 0) > 0
+                  then (
+                    coalesce(sum(tax_income), 0) / coalesce(sum(wages_paid), 0) * 100
+                  )::double precision
+                else max(tax_rate)::double precision
+              end as "taxRate",
+              coalesce(sum(company_observations), 0)::int as "companyObservations"
+            from country_tax_hourly
+            where
+              country_code = ${countryCode}
+              and bucket_started_at >= ${input.fromHour}
+              and bucket_started_at < ${input.toHour}
+              and item_code = ${input.itemCode}
+            group by region_id, owner_country_id, item_code, core
+            order by
+              coalesce(sum(tax_income), 0) desc,
+              max(region_name) asc,
+              item_code asc
+          `)
+        : db.execute(sql<CountryTaxEntry>`
+            select
+              region_id as "regionId",
+              max(region_name) as "regionName",
+              owner_country_id as "ownerCountryId",
+              max(owner_country_code) as "ownerCountryCode",
+              max(owner_country_name) as "ownerCountryName",
+              item_code as "itemCode",
+              core as "core",
+              coalesce(sum(wages_paid), 0)::double precision as "wagesPaid",
+              coalesce(sum(tax_income), 0)::double precision as "taxIncome",
+              case
+                when coalesce(sum(wages_paid), 0) > 0
+                  then (
+                    coalesce(sum(tax_income), 0) / coalesce(sum(wages_paid), 0) * 100
+                  )::double precision
+                else max(tax_rate)::double precision
+              end as "taxRate",
+              coalesce(sum(company_observations), 0)::int as "companyObservations"
+            from country_tax_hourly
+            where
+              country_code = ${countryCode}
+              and bucket_started_at >= ${input.fromHour}
+              and bucket_started_at < ${input.toHour}
+            group by region_id, owner_country_id, item_code, core
+            order by
+              coalesce(sum(tax_income), 0) desc,
+              max(region_name) asc,
+              item_code asc
+          `),
+    ]);
+
+    const country = countryResult.rows[0] as { countryName: string | null } | undefined;
+
+    return {
+      countryCode,
+      countryName: country?.countryName ?? null,
+      fromHour: formatUtcHourInput(input.fromHour),
+      toHour: formatUtcHourInput(input.toHour),
+      entries: entriesResult.rows as CountryTaxEntry[],
+    };
+  } catch (error) {
+    if (!isMissingRelationError(error)) {
+      throw error;
+    }
+
+    return {
+      countryCode,
+      countryName: null,
+      fromHour: formatUtcHourInput(input.fromHour),
+      toHour: formatUtcHourInput(input.toHour),
+      entries: [],
+    };
+  }
 }
 
 type ProductMetricRow = {

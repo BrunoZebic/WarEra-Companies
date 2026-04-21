@@ -23,6 +23,9 @@ export type RegionReferenceRowInput = {
   countryId: string;
   countryCode: string;
   countryName: string;
+  initialCountryId: string;
+  initialCountryCode: string;
+  initialCountryName: string;
   development: number | null;
   mainCity: string | null;
   latitude: number | null;
@@ -54,6 +57,7 @@ export type CompanySnapshotRowInput = {
   ownerCountryCode: string | null;
   ownerCountryName: string | null;
   workerCount: number | null;
+  hourlyWages: number | null;
   estimatedValue: number | null;
   production: number | null;
   isFull: boolean | null;
@@ -82,9 +86,18 @@ export function normalizeRegions(
 ) {
   return Object.values(regions).map<RegionReferenceRowInput>((region) => {
     const country = countryById.get(region.country);
+    const initialCountryId =
+      "initialCountry" in region && typeof region.initialCountry === "string"
+        ? region.initialCountry
+        : region.country;
+    const initialCountry = countryById.get(initialCountryId);
 
     if (!country) {
       throw new Error(`Missing country reference for region ${region._id}.`);
+    }
+
+    if (!initialCountry) {
+      throw new Error(`Missing initial country reference for region ${region._id}.`);
     }
 
     return {
@@ -95,6 +108,9 @@ export function normalizeRegions(
       countryId: country.countryId,
       countryCode: country.countryCode,
       countryName: country.countryName,
+      initialCountryId: initialCountry.countryId,
+      initialCountryCode: initialCountry.countryCode,
+      initialCountryName: initialCountry.countryName,
       development: region.development ?? null,
       mainCity: region.mainCity ?? null,
       latitude: region.position?.[1] ?? null,
@@ -123,6 +139,7 @@ export function normalizeCompanySnapshotRow(input: {
   company: CompanyGetByIdResponse;
   regionById: Map<string, RegionReferenceRowInput>;
   owner: OwnerSnapshotInput;
+  hourlyWages: number | null;
 }): CompanySnapshotRowInput {
   const region = input.regionById.get(input.company.region);
 
@@ -147,6 +164,7 @@ export function normalizeCompanySnapshotRow(input: {
     ownerCountryCode: input.owner.ownerCountryCode,
     ownerCountryName: input.owner.ownerCountryName,
     workerCount: input.company.workerCount ?? null,
+    hourlyWages: input.hourlyWages,
     estimatedValue: input.company.estimatedValue ?? null,
     production: input.company.production ?? null,
     isFull: input.company.isFull ?? null,

@@ -39,7 +39,7 @@ export default async function HomePage() {
               </div>
               <div className="flex items-center gap-3 text-sm text-blue-300">
                 <Flag className="h-4 w-4 text-blue-300" />
-                Sync je spreman za vanjski scheduler svakih 6 sati
+                Sync je spreman za vanjski scheduler svakih sat vremena
               </div>
               <div className="flex gap-3 pt-2">
                 <Link
@@ -60,6 +60,12 @@ export default async function HomePage() {
                   className="inline-flex items-center gap-2 rounded-full border border-blue-700/40 px-4 py-2 text-sm font-medium text-blue-300 transition hover:bg-blue-800/30"
                 >
                   Proizvodi
+                </Link>
+                <Link
+                  href="/tools"
+                  className="inline-flex items-center gap-2 rounded-full border border-blue-700/40 px-4 py-2 text-sm font-medium text-blue-300 transition hover:bg-blue-800/30"
+                >
+                  Tools
                 </Link>
               </div>
             </div>

@@ -29,6 +29,13 @@
       "when": 1775151403028,
       "tag": "0003_thankful_hellfire_club",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1776808471875,
+      "tag": "0004_nasty_sage",
+      "breakpoints": true
     }
   ]
 }

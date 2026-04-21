@@ -58,3 +58,17 @@ export function formatDateTime(value: Date | string | null | undefined) {
     timeStyle: "short",
   }).format(date);
 }
+
+export function formatUtcDateTime(value: Date | string | null | undefined) {
+  if (!value) {
+    return "Nema podatka";
+  }
+
+  const date = value instanceof Date ? value : new Date(value);
+
+  return new Intl.DateTimeFormat("hr-HR", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "UTC",
+  }).format(date);
+}

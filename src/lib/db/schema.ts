@@ -120,6 +120,9 @@ export const regionReference = pgTable(
     countryId: text("country_id").notNull(),
     countryCode: text("country_code").notNull(),
     countryName: text("country_name").notNull(),
+    initialCountryId: text("initial_country_id").notNull(),
+    initialCountryCode: text("initial_country_code").notNull(),
+    initialCountryName: text("initial_country_name").notNull(),
     development: doublePrecision("development"),
     mainCity: text("main_city"),
     latitude: doublePrecision("latitude"),
@@ -156,6 +159,7 @@ export const companySnapshotRows = pgTable(
     ownerCountryCode: text("owner_country_code"),
     ownerCountryName: text("owner_country_name"),
     workerCount: integer("worker_count"),
+    hourlyWages: doublePrecision("hourly_wages"),
     estimatedValue: doublePrecision("estimated_value"),
     production: doublePrecision("production"),
     isFull: boolean("is_full"),
@@ -270,6 +274,49 @@ export const itemAggregates = pgTable(
       table.snapshotId,
       table.companyCount,
     ),
+  ],
+);
+
+export const countryTaxHourly = pgTable(
+  "country_tax_hourly",
+  {
+    bucketStartedAt: timestamp("bucket_started_at", { withTimezone: true }).notNull(),
+    snapshotId: uuid("snapshot_id")
+      .references(() => snapshots.id, { onDelete: "cascade" })
+      .notNull(),
+    countryId: text("country_id").notNull(),
+    countryCode: text("country_code").notNull(),
+    countryName: text("country_name").notNull(),
+    regionId: text("region_id").notNull(),
+    regionCode: text("region_code").notNull(),
+    regionName: text("region_name").notNull(),
+    ownerCountryGroupKey: text("owner_country_group_key").notNull(),
+    ownerCountryId: text("owner_country_id"),
+    ownerCountryCode: text("owner_country_code"),
+    ownerCountryName: text("owner_country_name"),
+    itemCode: text("item_code").notNull(),
+    core: boolean("core").notNull(),
+    wagesPaid: doublePrecision("wages_paid").notNull(),
+    taxIncome: doublePrecision("tax_income").notNull(),
+    taxRate: doublePrecision("tax_rate").notNull(),
+    companyObservations: integer("company_observations").notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [
+        table.bucketStartedAt,
+        table.countryId,
+        table.regionId,
+        table.ownerCountryGroupKey,
+        table.itemCode,
+        table.core,
+      ],
+    }),
+    index("country_tax_hourly_country_bucket_idx").on(
+      table.countryCode,
+      table.bucketStartedAt,
+    ),
+    index("country_tax_hourly_snapshot_idx").on(table.snapshotId),
   ],
 );
 
@@ -477,3 +524,4 @@ export type CountryAggregateRow = typeof countryAggregates.$inferSelect;
 export type RegionAggregateRow = typeof regionAggregates.$inferSelect;
 export type ItemAggregateRow = typeof itemAggregates.$inferSelect;
 export type ItemDeltaRow = typeof itemDeltas.$inferSelect;
+export type CountryTaxHourlyRow = typeof countryTaxHourly.$inferSelect;

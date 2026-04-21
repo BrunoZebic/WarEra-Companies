@@ -43,7 +43,7 @@ R2 archive support uses these extra variables:
 - Cleanup route: `GET /api/internal/sync/cleanup`
 - Status route: `GET /api/internal/sync/status`
 - Auth header: `Authorization: Bearer ${CRON_SECRET}`
-- Scheduler: GitHub Actions every 6 hours
+- Scheduler: GitHub Actions every hour
 - Sync runs in repeated passes until the staging snapshot is complete and promoted
 - Cleanup runs after sync until retention/archive work is idle
 - Snapshot storage: Postgres staging + atomic promotion

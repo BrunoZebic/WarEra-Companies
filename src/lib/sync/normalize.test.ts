@@ -31,6 +31,7 @@ describe("normalize helpers", () => {
         code: "hr-zagreb",
         name: "Zagreb",
         country: "country-1",
+        initialCountry: "country-1",
         development: 12.5,
         mainCity: "Zagreb",
         position: [15.98, 45.81],
@@ -46,6 +47,7 @@ describe("normalize helpers", () => {
     expect(regionRows[0]).toMatchObject({
       regionCode: "hr-zagreb",
       countryCode: "hr",
+      initialCountryCode: "hr",
       latitude: 45.81,
       longitude: 15.98,
     });
@@ -78,6 +80,9 @@ describe("normalize helpers", () => {
           countryId: "country-1",
           countryCode: "hr",
           countryName: "Croatia",
+          initialCountryId: "country-1",
+          initialCountryCode: "hr",
+          initialCountryName: "Croatia",
           development: 12.5,
           mainCity: "Zagreb",
           latitude: 45.81,
@@ -111,6 +116,7 @@ describe("normalize helpers", () => {
       } as unknown as Parameters<typeof normalizeCompanySnapshotRow>[0]["company"],
       regionById,
       owner,
+      hourlyWages: 6.25,
     });
 
     expect(owner).toMatchObject({
@@ -123,6 +129,7 @@ describe("normalize helpers", () => {
       countryCode: "hr",
       regionCode: "hr-zagreb",
       ownerCountryCode: "hr",
+      hourlyWages: 6.25,
     });
     expect(row.wareraUpdatedAt?.toISOString()).toBe("2026-03-17T19:00:00.000Z");
   });
